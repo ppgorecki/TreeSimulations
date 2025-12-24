@@ -87,6 +87,12 @@ The pipeline consists of four phases:
 # Run with 12, 20, and 50 leaves, protein only
 ./simulate_pipeline.sh -l 12,20,50 -t protein
 
+# Generate alignments only (skip ML tree estimation, ~3x faster)
+./simulate_pipeline.sh -n 100 -l 12 -m
+
+# Later: infer ML trees from existing alignments
+./simulate_pipeline.sh -o simulation_output -n 100 -l 12 -i
+
 # Show help
 ./simulate_pipeline.sh -h
 ```
@@ -97,6 +103,9 @@ The pipeline consists of four phases:
 - `-t TYPE` - Sequence type: dna, protein, or both (default: both)
 - `-o DIR` - Output directory (default: simulation_output)
 - `-s SEED` - Random seed (default: 22)
+- `-f NUM` - Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
+- `-m` - Skip ML tree estimation (generate alignments only, ~3x faster)
+- `-i` - Infer-only mode: run only PhyML on existing alignments
 - `-h` - Show help message
 
 #### Python Script
@@ -125,6 +134,71 @@ The pipeline consists of four phases:
 - `-o, --output DIR` - Output directory (default: simulation_output)
 - `-s, --seed SEED` - Random seed (default: 22)
 - `-h, --help` - Show help message
+
+### Two-Stage Workflow (Alignments First, ML Trees Later)
+
+For faster testing or when you want to defer ML tree inference, you can split the pipeline into two stages:
+
+**Stage 1: Generate alignments only** (using `-m` flag)
+```bash
+# Fast: generate only alignments, skip PhyML (~3x faster)
+./simulate_pipeline.sh -n 100 -l 12,20 -o my_output -m
+```
+
+This creates:
+- Species trees
+- Gene trees (with duplication/loss and ILS)
+- DNA and protein alignments
+- **No ML trees** (PhyML skipped)
+
+**Stage 2: Infer ML trees from existing alignments** (using `-i` flag)
+```bash
+# Later: run only PhyML on existing alignments
+./simulate_pipeline.sh -o my_output -n 100 -l 12,20 -i
+```
+
+This:
+- **Skips** all simulation phases (species trees, gene trees, sequences)
+- **Runs only PhyML** on existing `alignment_TRUE.phy` files
+- Generates `ml_gene_tree.nwk` and PhyML statistics
+
+**Important:** When using `-i`, you must specify the **same parameters** (`-n`, `-l`) used in Stage 1.
+
+**Use Cases:**
+- Quick testing: Generate alignments fast, infer trees later if needed
+- Batch processing: Generate many alignments, then distribute ML inference across machines
+- Parameter exploration: Generate alignments once, experiment with different ML settings
+
+### Gene Tree Filtering by Leaf Count
+
+Due to duplication and loss events in Phase 2, gene trees may have varying numbers of leaves. The `-f NUM` option allows you to filter gene trees to have exactly NUM leaves.
+
+**How it works:**
+```bash
+# Require all gene trees to have exactly 10 leaves
+./simulate_pipeline.sh -n 100 -l 12 -f 10
+```
+
+When `-f NUM` is specified:
+- SimPhy generates a gene tree
+- The pipeline counts the number of leaves
+- If the tree has exactly NUM leaves, it's accepted
+- If not, SimPhy regenerates with a different seed (up to 1000 attempts)
+- Progress messages show how many retries were needed
+
+**Use Cases:**
+- **Consistent tree sizes**: Ensure all replicates have the same number of taxa for fair comparison
+- **Filtering DL effects**: Remove extreme duplication/loss outcomes
+- **Controlled experiments**: Study specific tree sizes while maintaining DL and ILS processes
+
+**Example output:**
+```
+Configuration: leaves12_dl1e-10_ps1e7
+Replicate 1: accepted after 15 retries (10 leaves)
+Replicate 2: accepted after 3 retries (10 leaves)
+```
+
+**Note:** If a tree with exactly NUM leaves cannot be generated after 1000 attempts, the last tree is accepted with a warning message.
 
 ### Customizing Advanced Parameters
 

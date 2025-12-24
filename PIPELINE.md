@@ -169,6 +169,8 @@ phyml -i alignment_TRUE.phy \
 
 **Output**: Unrooted ML tree in `alignment_TRUE.phy_phyml_tree.txt`
 
+**Note**: ML tree estimation can be skipped using the `-m` flag (alignments only), or run separately using the `-i` flag (infer-only mode). See "Two-Stage Workflow" section below for details.
+
 ### Expected ML Tree Quality
 
 For 1000 bp alignments with appropriate parameters:
@@ -227,6 +229,8 @@ phyml -i alignment_TRUE.phy \
 - `-d aa`: Amino acid sequences
 - `-m WAG`: WAG substitution matrix
 - Other parameters same as DNA
+
+**Note**: ML tree estimation can be skipped using the `-m` flag (alignments only), or run separately using the `-i` flag (infer-only mode). See "Two-Stage Workflow" section below for details.
 
 ## Output Structure
 
@@ -320,12 +324,81 @@ The pipeline can be run with customizable parameters:
 # Custom configuration
 ./simulate_pipeline.sh -n 50 -l 12,20,50 -t both -o my_output -s 42
 
+# Two-stage workflow: alignments first, ML trees later
+# Stage 1: Generate alignments only (skip PhyML, ~3x faster)
+./simulate_pipeline.sh -n 100 -l 12 -o my_output -m
+
+# Stage 2: Infer ML trees from existing alignments
+./simulate_pipeline.sh -o my_output -n 100 -l 12 -i
+
 # Options:
 #   -n NUM    Number of replicates per configuration (default: 100)
 #   -l LEAVES Comma-separated leaf counts (default: 12,20)
 #   -t TYPE   Sequence type: dna, protein, or both (default: both)
 #   -o DIR    Output directory (default: simulation_output)
 #   -s SEED   Random seed (default: 22)
+#   -f NUM    Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
+#   -m        Skip ML tree estimation (generate alignments only)
+#   -i        Infer-only mode: run only PhyML on existing alignments
 ```
+
+### Two-Stage Workflow
+
+The pipeline supports a two-stage workflow for flexibility and efficiency:
+
+**Stage 1: Simulation and Alignment Generation** (`-m` flag)
+- Runs Phases 1-4 but **skips PhyML** tree inference
+- Generates species trees, gene trees, and sequence alignments
+- Approximately **3× faster** than full pipeline
+- Useful for quickly generating alignment datasets
+
+**Stage 2: ML Tree Inference** (`-i` flag)
+- **Skips** Phases 1-2 (species and gene tree simulation)
+- **Skips** sequence generation in Phases 3-4
+- **Runs only PhyML** on existing `alignment_TRUE.phy` files
+- Generates ML trees and PhyML statistics
+- Must use **same parameters** (`-n`, `-l`) as Stage 1
+
+**Use Cases:**
+1. **Fast testing**: Generate alignments quickly, infer trees only if needed
+2. **Batch processing**: Generate alignments once, distribute ML inference across compute nodes
+3. **Parameter exploration**: Generate alignments once, experiment with different ML inference settings
+
+### Gene Tree Filtering by Leaf Count
+
+Due to duplication and loss events in Phase 2, gene trees can have varying numbers of leaves. The `-f NUM` option filters gene trees to ensure all replicates have exactly NUM leaves.
+
+**Example:**
+```bash
+# Require all gene trees to have exactly 10 leaves
+./simulate_pipeline.sh -n 100 -l 12 -f 10
+```
+
+**Filtering Process:**
+1. SimPhy generates a gene tree with duplication/loss and ILS
+2. The pipeline counts the number of leaves in the gene tree
+3. If the tree has exactly NUM leaves, it's accepted for Phases 3-4
+4. If not, SimPhy regenerates with a different seed (up to 1000 attempts)
+5. Progress messages indicate how many retries were needed
+
+**Technical Details:**
+- Leaf counting uses a simple algorithm: count commas in Newick format + 1
+- Each retry uses a different random seed: `seed + retry_count × 1,000,000`
+- Maximum 1000 retries per replicate (configurable via `MAX_GENE_TREE_RETRIES`)
+- If maximum retries reached, the last tree is accepted with a warning
+
+**Example output:**
+```
+Configuration: leaves12_dl1e-10_ps1e7
+  Replicate 1: accepted after 15 retries (10 leaves)
+  Replicate 2: accepted after 3 retries (10 leaves)
+  ...
+```
+
+**Use Cases:**
+- **Consistent tree sizes**: Ensure all datasets have the same number of taxa
+- **Fair comparison**: Remove variability due to different tree sizes
+- **Controlled experiments**: Study effects of ILS and DL while maintaining constant tree size
+- **Filtering artifacts**: Exclude gene trees with extreme duplication/loss outcomes
 
 See `README.md` for complete usage documentation.

@@ -30,6 +30,10 @@ OPTIONS:
     -o DIR        Output directory (default: simulation_output)
     -s SEED       Random seed (default: 22)
     -r MAX        Retry if duplicate sequences found, up to MAX attempts (default: 0 = no retry)
+    -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
+                  SimPhy retries until gene tree has exactly NUM leaves
+    -m            Skip ML tree estimation (PhyML) - only generate alignments
+    -i            Infer-only mode: only run PhyML on existing alignments (skip simulation)
     -h            Show this help message
 
 EXAMPLES:
@@ -45,9 +49,19 @@ EXAMPLES:
     # Quick test: 10 replicates, 12 leaves, both types
     $0 -n 10 -l 12 -t both
 
+    # Require gene trees to have exactly 10 leaves (filters out DL variations)
+    $0 -n 100 -l 12 -f 10
+
+    # Generate alignments only, skip ML tree estimation (faster)
+    $0 -n 10 -l 12 -m
+
+    # Infer ML trees from existing alignments (after running with -m)
+    $0 -o test_output -i
+
 OUTPUT:
-    The pipeline generates species trees, gene trees, and sequence alignments
-    with estimated ML trees in the specified output directory.
+    The pipeline generates species trees, gene trees, and sequence alignments.
+    By default, ML trees are estimated with PhyML. Use -m to skip ML estimation.
+    Use -i to infer ML trees from existing alignments without re-running simulation.
 
 EOF
     exit 1
@@ -83,6 +97,12 @@ OUTPUT_DIR="simulation_output"
 # Run control
 RUN_DNA=1
 RUN_PROTEIN=1
+RUN_ML_ESTIMATION=1  # 1 = run PhyML, 0 = skip ML tree estimation
+INFER_ONLY=0         # 1 = only infer ML trees from existing alignments, skip simulation
+
+# Gene tree filtering
+MIN_GENE_TREE_LEAVES=0  # 0 = no restriction, >0 = require exactly this many leaves
+MAX_GENE_TREE_RETRIES=1000  # Maximum attempts to generate tree with required leaves
 
 # Duplicate handling
 MAX_RETRIES=0  # 0 = no retry, >0 = retry up to MAX_RETRIES times
@@ -91,13 +111,16 @@ MAX_RETRIES=0  # 0 = no retry, >0 = retry up to MAX_RETRIES times
 # PARSE COMMAND LINE ARGUMENTS
 # ============================================================================
 
-while getopts "n:l:t:o:s:r:h" opt; do
+while getopts "n:l:t:o:s:r:f:mih" opt; do
     case ${opt} in
         n )
             NUM_REPLICATES=$OPTARG
             ;;
         l )
             IFS=',' read -ra NUM_LEAVES <<< "$OPTARG"
+            ;;
+        f )
+            MIN_GENE_TREE_LEAVES=$OPTARG
             ;;
         t )
             case ${OPTARG} in
@@ -127,6 +150,13 @@ while getopts "n:l:t:o:s:r:h" opt; do
             ;;
         r )
             MAX_RETRIES=$OPTARG
+            ;;
+        m )
+            RUN_ML_ESTIMATION=0
+            ;;
+        i )
+            INFER_ONLY=1
+            RUN_ML_ESTIMATION=1  # Force ML estimation on in infer-only mode
             ;;
         h )
             usage
@@ -168,6 +198,29 @@ check_duplicates() {
     fi
 }
 
+# Count the number of leaves in a Newick tree file
+# Returns the number of leaves (taxa)
+count_tree_leaves() {
+    local tree_file="$1"
+
+    if [ ! -f "$tree_file" ]; then
+        echo "0"
+        return
+    fi
+
+    # Read the tree and count leaves
+    # In Newick format, each leaf has a label followed by a colon and branch length
+    # Count occurrences of patterns like "taxon_name:"
+    local tree_content=$(cat "$tree_file")
+
+    # Count the number of commas + 1 (simple method for binary trees)
+    # This works because in a binary tree: #leaves = #commas + 1
+    local num_commas=$(echo "$tree_content" | tr -cd ',' | wc -c)
+    local num_leaves=$((num_commas + 1))
+
+    echo "$num_leaves"
+}
+
 # ============================================================================
 # FIND SOFTWARE BINARIES
 # ============================================================================
@@ -197,11 +250,13 @@ else
     echo "Or: sudo apt-get install iqtree (may need version 2.0+)"
 fi
 
-# Check for PhyML
-if ! command -v phyml &> /dev/null; then
-    echo "Warning: PhyML not found in PATH"
-    echo "Phases 3 and 4 (ML tree estimation) will fail"
-    echo "Install with: sudo apt-get install phyml"
+# Check for PhyML (only if ML estimation is enabled)
+if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+    if ! command -v phyml &> /dev/null; then
+        echo "Warning: PhyML not found in PATH"
+        echo "Phases 3 and 4 (ML tree estimation) will fail"
+        echo "Install with: sudo apt-get install phyml"
+    fi
 fi
 
 echo ""
@@ -215,10 +270,17 @@ echo "Simulation Pipeline Starting"
 echo "=========================================="
 echo ""
 echo "Configuration:"
-echo "  Replicates: ${NUM_REPLICATES}"
-echo "  Leaf counts: ${NUM_LEAVES[@]}"
+if [ ${INFER_ONLY} -eq 1 ]; then
+    echo "  Mode: INFER-ONLY (only run PhyML on existing alignments)"
+else
+    echo "  Replicates: ${NUM_REPLICATES}"
+    echo "  Leaf counts: ${NUM_LEAVES[@]}"
+    echo "  Random seed: ${RANDOM_SEED}"
+    if [ ${MIN_GENE_TREE_LEAVES} -gt 0 ]; then
+        echo "  Gene tree filter: require exactly ${MIN_GENE_TREE_LEAVES} leaves"
+    fi
+fi
 echo "  Output directory: ${OUTPUT_DIR}"
-echo "  Random seed: ${RANDOM_SEED}"
 echo "  Sequence types:"
 if [ ${RUN_DNA} -eq 1 ]; then
     echo "    - DNA: YES"
@@ -229,6 +291,13 @@ if [ ${RUN_PROTEIN} -eq 1 ]; then
     echo "    - Protein: YES"
 else
     echo "    - Protein: NO"
+fi
+if [ ${INFER_ONLY} -eq 0 ]; then
+    if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+        echo "  ML tree estimation: YES"
+    else
+        echo "  ML tree estimation: NO (alignments only)"
+    fi
 fi
 echo ""
 
@@ -248,6 +317,11 @@ fi
 
 echo "Phase 1: Simulating species trees..."
 echo "--------------------------------------"
+
+if [ ${INFER_ONLY} -eq 1 ]; then
+    echo "  Skipped (infer-only mode)"
+    echo ""
+else
 
 for num_leaves in "${NUM_LEAVES[@]}"; do
      echo "  Simulating ${NUM_REPLICATES} species trees with ${num_leaves} leaves..."
@@ -346,8 +420,7 @@ nexus
 
 done
 
-
-
+fi  # End INFER_ONLY check for Phase 1
 
 echo "Phase 1 completed!"
 echo ""
@@ -358,6 +431,11 @@ echo ""
 
 echo "Phase 2: Simulating gene trees with SimPhy..."
 echo "--------------------------------------"
+
+if [ ${INFER_ONLY} -eq 1 ]; then
+    echo "  Skipped (infer-only mode)"
+    echo ""
+else
 
 replicate_counter=0
 
@@ -382,42 +460,84 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
                 simphy_seed=$((RANDOM_SEED + replicate_counter))
 
+                # Retry loop for gene tree generation with leaf count filtering
+                gene_tree_retry=0
+                gene_tree_accepted=0
 
-                # **Parameters:**
-                # - `-sr`: Species tree in Nexus format
-                # - `-rg 1`: Generate 1 gene tree per locus
-                # - `-rl F:1`: Generate 1 locus
-                # - `-si F:1`: Generate 1 individual per species
-                # - `-sp F:<pop_size>`: Effective population size (10⁷ or 5×10⁷)
-                # - `-su F:0.0004`: Substitution rate (scaled)
-                # - `-lb F:<scaled_dl_rate>`: Birth (duplication) rate (scaled)
-                # - `-ld F:lb`: Death (loss) rate = birth rate
-                # - `-ll 3`: Minimum number of lineages
-                # - `-hg LN:1.5,1`: Gene tree height follows lognormal distribution
-                # - `-oc 1`: Output coalescent trees
-                # - `-cs <unique_seed>`: Random seed (base_seed + replicate_number for independence)
+                while [ $gene_tree_accepted -eq 0 ]; do
+                    # Generate gene tree with SimPhy
+                    # **Parameters:**
+                    # - `-sr`: Species tree in Nexus format
+                    # - `-rg 1`: Generate 1 gene tree per locus
+                    # - `-rl F:1`: Generate 1 locus
+                    # - `-si F:1`: Generate 1 individual per species
+                    # - `-sp F:<pop_size>`: Effective population size (10⁷ or 5×10⁷)
+                    # - `-su F:0.0000000004`: Substitution rate (4×10⁻¹⁰)
+                    # - `-lb F:<dl_rate>`: Birth (duplication) rate
+                    # - `-ld F:lb`: Death (loss) rate = birth rate
+                    # - `-ll 3`: Minimum number of lineages
+                    # - `-hg LN:1.5,1`: Gene tree height follows lognormal distribution
+                    # - `-oc 1`: Output coalescent trees
+                    # - `-cs <unique_seed>`: Random seed
 
-                 
-                while "${SIMPHY}" \
-                    -sr "${species_tree}" \
-                    -rg 1 \
-                    -rl F:1 \
-                    -si F:1 \
-                    -sp "F:${pop_size}" \
-                    -su F:0.0000000004 \
-                    -lb "F:${dl_rate}" \
-                    -ld F:lb \
-                    -ll 3 \
-                    -hg LN:1.5,1 \
-                    -oc 1 \
-                    -o "${output_folder}" \
-                    -v 0 \
-                    -cs ${simphy_seed}
+                    # Use different seed for each retry
+                    current_simphy_seed=$((simphy_seed + gene_tree_retry * 1000000))
 
-                do 
-                    break # hack, simphy returns undeterministic error sometimes
+                    while "${SIMPHY}" \
+                        -sr "${species_tree}" \
+                        -rg 1 \
+                        -rl F:1 \
+                        -si F:1 \
+                        -sp "F:${pop_size}" \
+                        -su F:0.0000000004 \
+                        -lb "F:${dl_rate}" \
+                        -ld F:lb \
+                        -ll 3 \
+                        -hg LN:1.5,1 \
+                        -oc 1 \
+                        -o "${output_folder}" \
+                        -v 0 \
+                        -cs ${current_simphy_seed}
+                    do
+                        break # hack, simphy returns undeterministic error sometimes
+                    done
+
+                    # Check if gene tree filtering is enabled
+                    if [ ${MIN_GENE_TREE_LEAVES} -gt 0 ]; then
+                        gene_tree_file="${output_folder}/1/g_trees1.trees"
+
+                        if [ -f "$gene_tree_file" ]; then
+                            gene_tree_leaves=$(count_tree_leaves "$gene_tree_file")
+
+                            if [ "$gene_tree_leaves" -eq "${MIN_GENE_TREE_LEAVES}" ]; then
+                                # Tree has correct number of leaves, accept it
+                                gene_tree_accepted=1
+                            else
+                                # Tree has wrong number of leaves, retry
+                                gene_tree_retry=$((gene_tree_retry + 1))
+
+                                if [ $gene_tree_retry -ge ${MAX_GENE_TREE_RETRIES} ]; then
+                                    echo "    Warning: replicate $i - max retries (${MAX_GENE_TREE_RETRIES}) reached. Gene tree has $gene_tree_leaves leaves (wanted ${MIN_GENE_TREE_LEAVES})"
+                                    gene_tree_accepted=1  # Accept anyway to avoid infinite loop
+                                fi
+                            fi
+                        else
+                            echo "    Warning: Gene tree file not found: $gene_tree_file"
+                            gene_tree_accepted=1  # Exit loop
+                        fi
+                    else
+                        # No filtering, accept the tree
+                        gene_tree_accepted=1
+                    fi
                 done
-            
+
+                if [ ${MIN_GENE_TREE_LEAVES} -gt 0 ] && [ $gene_tree_retry -gt 0 ]; then
+                    gene_tree_file="${output_folder}/1/g_trees1.trees"
+                    final_gene_tree_leaves=$(count_tree_leaves "$gene_tree_file")
+                    if [ "$final_gene_tree_leaves" -eq "${MIN_GENE_TREE_LEAVES}" ]; then
+                        echo "    Replicate $i: accepted after $gene_tree_retry retries ($final_gene_tree_leaves leaves)"
+                    fi
+                fi
 
                 replicate_counter=$((replicate_counter + 1))
             done
@@ -425,7 +545,13 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
     done
 done
 
-echo "Phase 2 completed! Generated ${replicate_counter} gene trees."
+fi  # End INFER_ONLY check for Phase 2
+
+if [ ${INFER_ONLY} -eq 0 ]; then
+    echo "Phase 2 completed! Generated ${replicate_counter} gene trees."
+else
+    echo "Phase 2 completed!"
+fi
 echo ""
 
 
@@ -455,9 +581,11 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                 dna_folder="${dna_output_dir}/replicate_$i"
                 mkdir -p "${dna_folder}"
 
-                # Read gene tree
-                gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
-                if [ -f "${gene_tree_file}" ]; then
+                # Simulate sequences (skip in infer-only mode)
+                if [ ${INFER_ONLY} -eq 0 ]; then
+                    # Read gene tree
+                    gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
+                    if [ -f "${gene_tree_file}" ]; then
                     gene_tree=$(cat "${gene_tree_file}")
 
                     # SimPhy with -su parameter already outputs branch lengths in substitutions per site
@@ -530,10 +658,11 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     else
                         echo "Warning: iqtree2 not found. Skipping sequence simulation for ${config_name} replicate ${i}"
                     fi
-                fi
+                    fi  # End gene_tree_file check
+                fi  # End INFER_ONLY check for sequence simulation
 
                 # Estimate gene tree with PhyML
-                if [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
+                if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
                     phyml -i "${dna_folder}/alignment_TRUE.phy" \
                           -m GTR \
                           -c 4 \
@@ -585,9 +714,11 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                 protein_folder="${protein_output_dir}/replicate_$i"
                 mkdir -p "${protein_folder}"
 
-                # Read gene tree
-                gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
-                if [ -f "${gene_tree_file}" ]; then
+                # Simulate sequences (skip in infer-only mode)
+                if [ ${INFER_ONLY} -eq 0 ]; then
+                    # Read gene tree
+                    gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
+                    if [ -f "${gene_tree_file}" ]; then
                     gene_tree=$(cat "${gene_tree_file}")
 
                     # SimPhy with -su parameter already outputs branch lengths in substitutions per site
@@ -645,10 +776,11 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     else
                         echo "Warning: iqtree2 not found. Skipping sequence simulation for ${config_name} replicate ${i}"
                     fi
-                fi
+                    fi  # End gene_tree_file check
+                fi  # End INFER_ONLY check for sequence simulation
 
                 # Estimate gene tree with PhyML (protein mode)
-                if [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
+                if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
                     phyml -i "${protein_folder}/alignment_TRUE.phy" \
                           -d aa \
                           -m WAG \

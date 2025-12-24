@@ -88,6 +88,9 @@ Both scripts support the same options:
 | Type | `-t TYPE` | `-t, --type TYPE` | dna, protein, or both | both |
 | Output | `-o DIR` | `-o, --output DIR` | Output directory | simulation_output |
 | Seed | `-s SEED` | `-s, --seed SEED` | Random seed | 22 |
+| Filter | `-f NUM` | N/A | Require gene trees with exactly NUM leaves | 0 (no filter) |
+| Skip ML | `-m` | N/A | Skip PhyML (alignments only) | - |
+| Infer-only | `-i` | N/A | Run only PhyML on existing alignments | - |
 | Help | `-h` | `-h, --help` | Show help | - |
 
 ## What Gets Generated
@@ -193,6 +196,39 @@ This generates only 10 datasets (2 configs: low/medium ILS, but only 12 leaves a
 # Python: space-separated
 ./simulate_pipeline.py -l 12 20 50
 ```
+
+### Two-Stage Workflow (Alignments First, ML Trees Later)
+
+For faster testing, you can generate alignments first, then infer ML trees later:
+
+**Stage 1: Generate alignments only**
+```bash
+# Skip PhyML tree estimation (~3x faster)
+./simulate_pipeline.sh -n 10 -l 12 -o my_test -m
+```
+
+This creates alignments but skips ML tree inference.
+
+**Stage 2: Infer ML trees from existing alignments**
+```bash
+# Later: run only PhyML on existing alignments
+./simulate_pipeline.sh -o my_test -n 10 -l 12 -i
+```
+
+This runs only PhyML on the existing `alignment_TRUE.phy` files, creating ML trees.
+
+**Important:** Use the same `-n` and `-l` values in both stages!
+
+### Gene Tree Filtering
+
+Filter gene trees to have exactly a specific number of leaves (useful for controlling duplication/loss effects):
+
+```bash
+# Require all gene trees to have exactly 10 leaves
+./simulate_pipeline.sh -n 100 -l 12 -f 10
+```
+
+This retries gene tree generation until a tree with exactly 10 leaves is found. Progress messages show the number of retries needed.
 
 ### Different Alignment Lengths (Advanced)
 
