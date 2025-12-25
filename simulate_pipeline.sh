@@ -885,14 +885,255 @@ echo ""
 fi  # End of RUN_PROTEIN check
 
 # ============================================================================
-# SUMMARY
+# SUMMARY AND METADATA FILE
 # ============================================================================
+
+# Create summary file with all parameters and file statistics
+SUMMARY_FILE="${OUTPUT_DIR}/simulation_summary.txt"
+
+echo "Writing simulation summary to: ${SUMMARY_FILE}"
+
+cat > "${SUMMARY_FILE}" << 'EOF_HEADER'
+================================================================================
+SIMULATION PIPELINE SUMMARY
+================================================================================
+EOF_HEADER
+
+# Add timestamp
+cat >> "${SUMMARY_FILE}" << EOF
+
+Generated: $(date '+%Y-%m-%d %H:%M:%S')
+Hostname: $(hostname)
+Working Directory: $(pwd)
+
+================================================================================
+CONFIGURATION PARAMETERS
+================================================================================
+
+Pipeline Mode:
+  Infer-only mode: $([ ${INFER_ONLY} -eq 1 ] && echo "YES (only ML tree inference)" || echo "NO (full simulation)")
+  ML tree estimation: $([ ${RUN_ML_ESTIMATION} -eq 1 ] && echo "YES" || echo "NO")
+
+Species Tree Parameters:
+  Tree height: ${TREE_HEIGHT} years
+  Speciation rate: ${SPECIATION_RATE} events/year
+  Extinction rate: ${EXTINCTION_RATE} events/year
+  Leaf set sizes: ${NUM_LEAVES[@]}
+
+Gene Tree Parameters (SimPhy):
+  Duplication/Loss rates: ${DUPLICATION_LOSS_RATES[@]} events/year
+  Population sizes: ${POPULATION_SIZES[@]}
+  Number of replicates: ${NUM_REPLICATES}
+  Random seed (base): ${RANDOM_SEED}
+
+Gene Tree Filtering:
+  Minimum leaves required: $([ ${MIN_GENE_TREE_LEAVES} -gt 0 ] && echo "${MIN_GENE_TREE_LEAVES} (filtering enabled)" || echo "0 (no filtering)")
+  Max retry attempts: ${MAX_GENE_TREE_RETRIES}
+
+Sequence Simulation:
+  Sequence types: $([ ${RUN_DNA} -eq 1 ] && echo -n "DNA " || echo -n "")$([ ${RUN_PROTEIN} -eq 1 ] && echo -n "PROTEIN" || echo -n "")
+  DNA alignment length: ${ALIGNMENT_LENGTH_DNA} bp
+  Protein alignment length: ${ALIGNMENT_LENGTH_PROTEIN} aa
+
+Indel Simulation:
+  Enabled: $([ ${ENABLE_INDELS} -eq 1 ] && echo "YES" || echo "NO")
+EOF
+
+if [ ${ENABLE_INDELS} -eq 1 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+  Insertion/Deletion rates: ${INDEL_RATES}
+  Length distribution: ${INDEL_SIZE_DIST}
+EOF
+fi
+
+cat >> "${SUMMARY_FILE}" << EOF
+
+Duplicate Sequence Handling:
+  Max retry attempts: ${MAX_RETRIES} $([ ${MAX_RETRIES} -gt 0 ] && echo "(retry enabled)" || echo "(no retry)")
+
+Output Directory: ${OUTPUT_DIR}
+
+================================================================================
+CONFIGURATION COMBINATIONS
+================================================================================
+
+Total configurations: $((${#NUM_LEAVES[@]} * ${#DUPLICATION_LOSS_RATES[@]} * ${#POPULATION_SIZES[@]}))
+
+Configuration matrix:
+EOF
+
+for num_leaves in "${NUM_LEAVES[@]}"; do
+    for dl_rate in "${DUPLICATION_LOSS_RATES[@]}"; do
+        for pop_size in "${POPULATION_SIZES[@]}"; do
+            config_name="leaves${num_leaves}_dl${dl_rate}_ps${pop_size}"
+            echo "  - ${config_name}" >> "${SUMMARY_FILE}"
+        done
+    done
+done
+
+# Count generated files
+if [ ${INFER_ONLY} -eq 0 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+
+================================================================================
+GENERATED FILES SUMMARY
+================================================================================
+
+Species Trees:
+EOF
+
+    species_tree_count=$(find "${SPECIES_TREES_DIR}" -name "*.nex" 2>/dev/null | wc -l)
+    echo "  Total species trees: ${species_tree_count}" >> "${SUMMARY_FILE}"
+
+    cat >> "${SUMMARY_FILE}" << EOF
+
+Gene Trees:
+EOF
+
+    gene_tree_count=$(find "${GENE_TREES_DIR}" -name "g_trees1.trees" 2>/dev/null | wc -l)
+    echo "  Total gene trees: ${gene_tree_count}" >> "${SUMMARY_FILE}"
+fi
+
+if [ ${RUN_DNA} -eq 1 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+
+DNA Sequences and Trees:
+EOF
+
+    dna_alignment_count=$(find "${DNA_DIR}" -name "alignment_TRUE.phy" 2>/dev/null | wc -l)
+    dna_ml_tree_count=$(find "${DNA_DIR}" -name "ml_gene_tree.nwk" 2>/dev/null | wc -l)
+    echo "  DNA alignments: ${dna_alignment_count}" >> "${SUMMARY_FILE}"
+    if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+        echo "  DNA ML trees: ${dna_ml_tree_count}" >> "${SUMMARY_FILE}"
+    fi
+fi
+
+if [ ${RUN_PROTEIN} -eq 1 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+
+Protein Sequences and Trees:
+EOF
+
+    protein_alignment_count=$(find "${PROTEIN_DIR}" -name "alignment_TRUE.phy" 2>/dev/null | wc -l)
+    protein_ml_tree_count=$(find "${PROTEIN_DIR}" -name "ml_gene_tree.nwk" 2>/dev/null | wc -l)
+    echo "  Protein alignments: ${protein_alignment_count}" >> "${SUMMARY_FILE}"
+    if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+        echo "  Protein ML trees: ${protein_ml_tree_count}" >> "${SUMMARY_FILE}"
+    fi
+fi
+
+# Software versions
+cat >> "${SUMMARY_FILE}" << EOF
+
+================================================================================
+SOFTWARE VERSIONS
+================================================================================
+
+EOF
+
+if command -v simphy_lnx64 &> /dev/null; then
+    echo "SimPhy: $(simphy_lnx64 -h 2>&1 | grep -i "version" | head -1 || echo "Version information not available")" >> "${SUMMARY_FILE}"
+else
+    echo "SimPhy: Not found in PATH" >> "${SUMMARY_FILE}"
+fi
+
+if command -v iqtree2 &> /dev/null; then
+    iqtree_version=$(iqtree2 --version 2>&1 | grep -i "version" | head -1 || echo "Unknown")
+    echo "IQ-TREE 2: ${iqtree_version}" >> "${SUMMARY_FILE}"
+else
+    echo "IQ-TREE 2: Not found in PATH" >> "${SUMMARY_FILE}"
+fi
+
+if command -v phyml &> /dev/null; then
+    phyml_version=$(phyml --version 2>&1 | head -1 || echo "Unknown")
+    echo "PhyML: ${phyml_version}" >> "${SUMMARY_FILE}"
+else
+    echo "PhyML: Not found in PATH" >> "${SUMMARY_FILE}"
+fi
+
+cat >> "${SUMMARY_FILE}" << EOF
+
+================================================================================
+DIRECTORY STRUCTURE
+================================================================================
+
+${OUTPUT_DIR}/
+├── simulation_summary.txt (this file)
+├── species_trees/
+EOF
+
+if [ ${INFER_ONLY} -eq 0 ]; then
+    for num_leaves in "${NUM_LEAVES[@]}"; do
+        echo "│   ├── lf${num_leaves}_replicate*.nex" >> "${SUMMARY_FILE}"
+    done
+fi
+
+cat >> "${SUMMARY_FILE}" << EOF
+├── gene_trees/
+EOF
+
+for num_leaves in "${NUM_LEAVES[@]}"; do
+    for dl_rate in "${DUPLICATION_LOSS_RATES[@]}"; do
+        for pop_size in "${POPULATION_SIZES[@]}"; do
+            config_name="leaves${num_leaves}_dl${dl_rate}_ps${pop_size}"
+            echo "│   ├── ${config_name}/" >> "${SUMMARY_FILE}"
+            echo "│   │   └── replicate_*/1/g_trees1.trees" >> "${SUMMARY_FILE}"
+        done
+    done
+done
+
+if [ ${RUN_DNA} -eq 1 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+├── dna/
+EOF
+    for num_leaves in "${NUM_LEAVES[@]}"; do
+        for dl_rate in "${DUPLICATION_LOSS_RATES[@]}"; do
+            for pop_size in "${POPULATION_SIZES[@]}"; do
+                config_name="leaves${num_leaves}_dl${dl_rate}_ps${pop_size}"
+                echo "│   ├── ${config_name}/" >> "${SUMMARY_FILE}"
+                echo "│   │   └── replicate_*/{alignment_TRUE.phy, ml_gene_tree.nwk}" >> "${SUMMARY_FILE}"
+            done
+        done
+    done
+fi
+
+if [ ${RUN_PROTEIN} -eq 1 ]; then
+    cat >> "${SUMMARY_FILE}" << EOF
+└── protein/
+EOF
+    for num_leaves in "${NUM_LEAVES[@]}"; do
+        for dl_rate in "${DUPLICATION_LOSS_RATES[@]}"; do
+            for pop_size in "${POPULATION_SIZES[@]}"; do
+                config_name="leaves${num_leaves}_dl${dl_rate}_ps${pop_size}"
+                echo "    ├── ${config_name}/" >> "${SUMMARY_FILE}"
+                echo "    │   └── replicate_*/{alignment_TRUE.phy, ml_gene_tree.nwk}" >> "${SUMMARY_FILE}"
+            done
+        done
+    done
+fi
+
+cat >> "${SUMMARY_FILE}" << EOF
+
+================================================================================
+NOTES
+================================================================================
+
+- All parameters are stored in this summary file for reproducibility
+- Random seeds vary by replicate: base_seed + replicate_number
+- Gene tree branch lengths are in substitutions per site (output by SimPhy)
+- ML trees are unrooted (PhyML output)
+
+For detailed methodology, see PIPELINE.md
+
+================================================================================
+EOF
 
 echo "=========================================="
 echo "Pipeline Completed Successfully!"
 echo "=========================================="
 echo ""
 echo "Output directory: ${OUTPUT_DIR}"
+echo "Summary file: ${SUMMARY_FILE}"
 echo ""
 echo "Generated data:"
 echo "  - Species trees: ${SPECIES_TREES_DIR}"

@@ -512,6 +512,7 @@ For each replicate and configuration:
 
 ```
 simulation_output/
+├── simulation_summary.txt                # Complete parameter summary and file statistics
 ├── species_trees/
 │   └── lf12_replicate1.nex               # Species tree for Phase 2 (Nexus format)
 ├── gene_trees/
@@ -538,6 +539,30 @@ simulation_output/
             ├── alignment_TRUE.phy_phyml_stats.txt # PhyML statistics
             └── ml_gene_tree.nwk          # Copied ML tree
 ```
+
+### Simulation Summary File
+
+The pipeline automatically generates `simulation_summary.txt` in the output directory containing:
+
+**Configuration Documentation:**
+- All command-line parameters used
+- Species tree, gene tree, and sequence parameters
+- Indel simulation settings (if enabled)
+- Gene tree filtering settings (if enabled)
+- Timestamp, hostname, and working directory
+
+**File Statistics:**
+- Count of species trees generated
+- Count of gene trees generated
+- Count of DNA alignments and ML trees
+- Count of protein alignments and ML trees
+
+**Additional Information:**
+- Software versions (SimPhy, IQ-TREE 2, PhyML)
+- Complete directory structure
+- Configuration matrix listing all parameter combinations
+
+This file provides complete documentation for reproducibility and sharing simulation details with collaborators.
 
 ## Simulation Scale
 

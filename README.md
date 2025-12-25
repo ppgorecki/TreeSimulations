@@ -256,6 +256,7 @@ cp config.example.sh config.sh
 
 ```
 simulation_output/
+├── simulation_summary.txt              # Automatic summary of all parameters and files
 ├── species_trees/
 │   ├── species_tree_12_leaves_001.nwk
 │   ├── species_tree_12_leaves_001.nex
@@ -283,6 +284,62 @@ simulation_output/
     └── ...
 ```
 
+### Simulation Summary File
+
+Each pipeline run automatically generates `simulation_summary.txt` in the output directory. This file contains:
+
+- **Complete parameter documentation**: All command-line options, species tree parameters, gene tree settings, sequence lengths, indel parameters, etc.
+- **File statistics**: Counts of all generated species trees, gene trees, alignments, and ML trees
+- **Software versions**: SimPhy, IQ-TREE 2, and PhyML versions used
+- **Configuration matrix**: List of all parameter combinations
+- **Timestamp and environment**: When and where the simulation was run
+
+This summary file is essential for:
+- **Reproducibility**: Contains all information needed to reproduce the simulation
+- **Documentation**: Quick reference for what parameters were used
+- **Sharing**: Easy to share simulation details with collaborators
+- **Verification**: Confirm all expected files were generated
+
+**Example excerpt:**
+```
+================================================================================
+CONFIGURATION PARAMETERS
+================================================================================
+
+Species Tree Parameters:
+  Tree height: 1800000337.5 years
+  Speciation rate: 1.8e-9 events/year
+  Leaf set sizes: 12
+
+Gene Tree Parameters (SimPhy):
+  Duplication/Loss rates: 1e-10 2e-10 5e-10 events/year
+  Population sizes: 1e7 5e7
+  Number of replicates: 100
+
+Sequence Simulation:
+  DNA alignment length: 1000 bp
+  Protein alignment length: 333 aa
+
+Indel Simulation:
+  Enabled: YES
+  Insertion/Deletion rates: 0.03,0.09
+  Length distribution: POW{1.7/50}
+
+================================================================================
+GENERATED FILES SUMMARY
+================================================================================
+
+Species Trees:
+  Total species trees: 1
+
+Gene Trees:
+  Total gene trees: 6
+
+Protein Sequences and Trees:
+  Protein alignments: 6
+  Protein ML trees: 6
+```
+
 ## Configuration Combinations
 
 With default parameters, the pipeline generates:
@@ -294,6 +351,9 @@ With default parameters, the pipeline generates:
 - **Total datasets: 1,200 per sequence type (DNA/protein)**
 
 ## File Descriptions
+
+### Summary File
+- `simulation_summary.txt` - Automatically generated file containing all parameters, file counts, software versions, and configuration details for reproducibility
 
 ### Species Trees
 - `.nwk` - Newick format (for general use)
