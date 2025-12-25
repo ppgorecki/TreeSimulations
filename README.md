@@ -56,12 +56,12 @@ The pipeline consists of four phases:
 - **Substitution rates (AC, AG, AT, CG, CT, GT)**: Sampled from Dirichlet(12.776722, 20.869581, 5.647810, 9.863668, 30.679899, 3.199725)
 - **Nucleotide frequencies (T, C, A, G)**: Sampled from Dirichlet(113.48869, 69.02545, 78.66144, 99.83793)
 - **Alpha (Γ shape)**: Sampled from Lognormal(-0.470703916, 0.348667224)
-- **Alignment length**: 1,000 bp
+- **Alignment length**: 1,000 bp (default, configurable via `--dna-length`)
 
 #### Protein Sequences (AliSim/IQ-TREE 2)
 - **Model**: WAG+Γ
 - **Alpha (Γ shape)**: Sampled from Lognormal(-0.470703916, 0.348667224)
-- **Alignment length**: 333 amino acids (approximately 1,000 bp / 3)
+- **Alignment length**: 333 amino acids (default, configurable via `--protein-length`)
 
 ### Gene Tree Estimation
 - **DNA**: PhyML with GTR+Γ model
@@ -93,6 +93,14 @@ The pipeline consists of four phases:
 # Later: infer ML trees from existing alignments
 ./simulate_pipeline.sh -o simulation_output -n 100 -l 12 -i
 
+# Custom alignment lengths
+./simulate_pipeline.sh -n 100 -l 12 --protein-length 500
+./simulate_pipeline.sh -n 100 -l 12 --dna-length 2000 --protein-length 500
+
+# With indel simulation
+./simulate_pipeline.sh -n 100 -l 12 --indel-model realistic
+./simulate_pipeline.sh -n 100 -l 12 --protein-length 500 --indel-model realistic
+
 # Show help
 ./simulate_pipeline.sh -h
 ```
@@ -103,9 +111,15 @@ The pipeline consists of four phases:
 - `-t TYPE` - Sequence type: dna, protein, or both (default: both)
 - `-o DIR` - Output directory (default: simulation_output)
 - `-s SEED` - Random seed (default: 22)
-- `-f NUM` - Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
+- `-r MAX` - Retry if duplicate sequences found, up to MAX attempts (default: 0)
+- `-f NUM` - Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
 - `-m` - Skip ML tree estimation (generate alignments only, ~3x faster)
 - `-i` - Infer-only mode: run only PhyML on existing alignments
+- `--dna-length NUM` - DNA alignment length in base pairs (default: 1000)
+- `--protein-length NUM` - Protein alignment length in amino acids (default: 333)
+- `--indel-model MODEL` - Indel preset: noindels, realistic, conservative, or highrate
+- `--indel INS,DEL` - Enable indel simulation with specified rates (e.g., 0.03,0.09)
+- `--indel-size DIST` - Indel length distribution (e.g., "POW{1.7/50}")
 - `-h` - Show help message
 
 #### Python Script
@@ -200,16 +214,34 @@ Replicate 2: accepted after 3 retries (10 leaves)
 
 **Note:** If a tree with exactly NUM leaves cannot be generated after 1000 attempts, the last tree is accepted with a warning message.
 
-### Customizing Advanced Parameters
+### Customizing Alignment Lengths
 
-For advanced customization (duplication/loss rates, population sizes, etc.), edit the configuration section at the top of the script:
+Alignment lengths can be customized via command-line options:
+
+```bash
+# Custom protein alignment length (e.g., for longer protein domains)
+./simulate_pipeline.sh -n 100 -l 12 --protein-length 500
+
+# Custom DNA alignment length
+./simulate_pipeline.sh -n 100 -l 12 --dna-length 2000
+
+# Both custom lengths
+./simulate_pipeline.sh -n 100 -l 12 --dna-length 1500 --protein-length 500
+```
+
+**Effects on simulation:**
+- **Without indels**: Final alignment length equals the specified value exactly
+- **With indels**: Final alignment length varies due to insertions and deletions
+  - Example: 1000 bp with `--indel 0.03,0.09` → ~940 bp on average
+
+### Customizing Other Advanced Parameters
+
+For duplication/loss rates, population sizes, and other parameters, edit the configuration section at the top of the script:
 
 ```bash
 # In simulate_pipeline.sh:
 DUPLICATION_LOSS_RATES=(1e-10 2e-10 5e-10)
 POPULATION_SIZES=(1e7 5e7)
-ALIGNMENT_LENGTH_DNA=1000
-ALIGNMENT_LENGTH_PROTEIN=333
 ```
 
 Or use the `config.example.sh` file:

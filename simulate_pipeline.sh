@@ -33,6 +33,8 @@ OPTIONS:
     -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
     -m            Skip ML tree estimation (PhyML) - only generate alignments
     -i            Infer-only mode: only run PhyML on existing alignments (skip simulation)
+    --dna-length NUM      DNA alignment length in base pairs (default: 1000)
+    --protein-length NUM  Protein alignment length in amino acids (default: 333)
     --indel-model Indel preset: noindels, realistic, conservative, or highrate
                   noindels:     Disable indels (substitutions only)
                   realistic:    --indel 0.03,0.09 --indel-size "POW{1.7/50}" (default)
@@ -76,6 +78,12 @@ EXAMPLES:
 
     # Custom indel parameters (manual specification)
     $0 -n 10 -l 12 --indel 0.03,0.09 --indel-size "POW 1.7 20"
+
+    # Custom alignment lengths
+    $0 -n 10 -l 12 --dna-length 500 --protein-length 200
+
+    # Longer protein alignments with indels
+    $0 -n 10 -l 12 --protein-length 500 --indel-model realistic
 
 OUTPUT:
     The pipeline generates species trees, gene trees, and sequence alignments.
@@ -190,6 +198,14 @@ while [[ $# -gt 0 ]]; do
             INFER_ONLY=1
             RUN_ML_ESTIMATION=1
             shift
+            ;;
+        --dna-length)
+            ALIGNMENT_LENGTH_DNA=$2
+            shift 2
+            ;;
+        --protein-length)
+            ALIGNMENT_LENGTH_PROTEIN=$2
+            shift 2
             ;;
         --indel-model)
             case ${2} in
@@ -357,6 +373,13 @@ if [ ${INFER_ONLY} -eq 0 ]; then
         echo "  ML tree estimation: YES"
     else
         echo "  ML tree estimation: NO (alignments only)"
+    fi
+    echo "  Alignment lengths:"
+    if [ ${RUN_DNA} -eq 1 ]; then
+        echo "    - DNA: ${ALIGNMENT_LENGTH_DNA} bp"
+    fi
+    if [ ${RUN_PROTEIN} -eq 1 ]; then
+        echo "    - Protein: ${ALIGNMENT_LENGTH_PROTEIN} aa"
     fi
     if [ ${ENABLE_INDELS} -eq 1 ]; then
         echo "  Indel simulation: YES"

@@ -128,7 +128,7 @@ The pipeline supports realistic indel simulation using empirically-derived param
 - Sampled from Lognormal(-0.470703916, 0.348667224)
 - Controls rate heterogeneity across sites
 
-**Alignment Length**: 1000 bp
+**Alignment Length**: 1000 bp (default, configurable via `--dna-length`)
 
 ### AliSim Command Example
 
@@ -206,7 +206,9 @@ Protein sequences are simulated similarly to DNA, but using amino acid substitut
 - Sampled from Lognormal(-0.470703916, 0.348667224)
 - Same distribution as DNA, independent samples
 
-**Alignment Length**: 333 amino acids (≈ 1000 bp / 3)
+**Alignment Length**: 333 amino acids (default, configurable via `--protein-length`)
+- Default value chosen as ≈ 1000 bp / 3 to match DNA length
+- Can be set independently from DNA length
 
 ### AliSim Command Example
 
@@ -622,15 +624,18 @@ The pipeline can be run with customizable parameters:
 ./simulate_pipeline.sh -o my_output -n 100 -l 12 -i
 
 # Options:
-#   -n NUM    Number of replicates per configuration (default: 100)
-#   -l LEAVES Comma-separated leaf counts (default: 12,20)
-#   -t TYPE   Sequence type: dna, protein, or both (default: both)
-#   -o DIR    Output directory (default: simulation_output)
+#   -n NUM               Number of replicates per configuration (default: 100)
+#   -l LEAVES            Comma-separated leaf counts (default: 12,20)
+#   -t TYPE              Sequence type: dna, protein, or both (default: both)
+#   -o DIR               Output directory (default: simulation_output)
 #   -s SEED              Random seed (default: 22)
 #   -r MAX               Retry if duplicate sequences found, up to MAX attempts (default: 0)
+#   -f NUM               Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
 #   -m                   Skip ML tree estimation (generate alignments only)
 #   -i                   Infer-only mode: run only PhyML on existing alignments
-#   --indel-model MODEL  Indel preset: realistic, conservative, or highrate
+#   --dna-length NUM     DNA alignment length in base pairs (default: 1000)
+#   --protein-length NUM Protein alignment length in amino acids (default: 333)
+#   --indel-model MODEL  Indel preset: noindels, realistic, conservative, or highrate
 #   --indel INS,DEL      Enable indel simulation with specified rates (e.g., 0.03,0.09)
 #   --indel-size DIST    Indel length distribution (default: POW 1.7 50)
 ```
@@ -693,5 +698,38 @@ Configuration: leaves12_dl1e-10_ps1e7
 - **Fair comparison**: Remove variability due to different tree sizes
 - **Controlled experiments**: Study effects of ILS and DL while maintaining constant tree size
 - **Filtering artifacts**: Exclude gene trees with extreme duplication/loss outcomes
+
+### Custom Alignment Lengths
+
+The pipeline allows customization of alignment lengths for both DNA and protein sequences via command-line options.
+
+**Example:**
+```bash
+# Custom protein alignment length
+./simulate_pipeline.sh -n 100 -l 12 --protein-length 500
+
+# Custom DNA alignment length
+./simulate_pipeline.sh -n 100 -l 12 --dna-length 2000
+
+# Both custom lengths
+./simulate_pipeline.sh -n 100 -l 12 --dna-length 1500 --protein-length 500
+
+# Longer alignments with indels
+./simulate_pipeline.sh -n 100 -l 12 --protein-length 500 --indel-model realistic
+```
+
+**Technical Details:**
+- DNA and protein alignment lengths are set independently
+- The `--length` parameter is passed directly to AliSim
+- **Without indels**: Alignment length equals the specified value exactly
+- **With indels**: Final alignment length varies due to insertions and deletions
+  - Expected length ≈ specified length × (1 + insertion_rate - deletion_rate)
+  - Example: 1000 bp with `--indel 0.03,0.09` → ~940 bp on average
+
+**Use Cases:**
+- **Longer alignments**: Improve phylogenetic signal for difficult inference problems
+- **Shorter alignments**: Faster simulations for testing and prototyping
+- **Variable lengths**: Test method robustness across different data sizes
+- **Protein-specific lengths**: Simulate realistic protein domain lengths (e.g., 200-500 aa)
 
 See `README.md` for complete usage documentation.
