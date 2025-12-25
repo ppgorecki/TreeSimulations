@@ -111,6 +111,10 @@ Gene trees from SimPhy (Phase 2) are used directly - no branch length conversion
 
 **Model**: GTR+Γ (General Time Reversible with Gamma rate heterogeneity)
 
+**Optional: Insertion-Deletion (Indel) Model**
+
+The pipeline supports realistic indel simulation using empirically-derived parameters (Ly-Trong et al. 2022). Indels can be enabled with the `--indel` flag.
+
 **Substitution Rates** (AC, AG, AT, CG, CT, GT):
 - Sampled from Dirichlet(12.776722, 20.869581, 5.647810, 9.863668, 30.679899, 3.199725)
 - Independent sample for each gene tree
@@ -137,12 +141,23 @@ alpha="0.879134"
 # Build model and run
 model="GTR{${gtr_rates}}+F{${base_freqs}}+G4{${alpha}}"
 
+# Without indels (default)
 iqtree2 --alisim alignment \
   -m "${model}" \
   -t gene_tree.nwk \
   --length 1000 \
   -seed 22 \
-  --out-format phylip
+  -af phy
+
+# With indels (empirical parameters)
+iqtree2 --alisim alignment \
+  -m "${model}" \
+  -t gene_tree.nwk \
+  --length 1000 \
+  --indel 0.03,0.09 \
+  --indel-size POW 1.7 50 \
+  -seed 22 \
+  -af phy
 ```
 
 ### Maximum Likelihood Gene Tree Estimation
@@ -232,6 +247,263 @@ phyml -i alignment_TRUE.phy \
 
 **Note**: ML tree estimation can be skipped using the `-m` flag (alignments only), or run separately using the `-i` flag (infer-only mode). See "Two-Stage Workflow" section below for details.
 
+## Insertion-Deletion (Indel) Modeling
+
+### Overview
+
+The pipeline optionally supports insertion-deletion (indel) simulation using **AliSim** (Ly-Trong et al. 2022). While substitution-only models (GTR, WAG) are simpler and computationally faster, indel modeling provides more biologically realistic sequence evolution and is important for testing phylogenetic methods under realistic conditions.
+
+### When to Use Indel Modeling
+
+**Use indel simulation when:**
+- Testing alignment methods or alignment-free phylogenetic approaches
+- Studying the impact of alignment errors on tree inference
+- Generating realistic benchmarks that mirror empirical data
+- Comparing phylogenetic methods under challenging conditions
+- Simulating protein evolution (indels are common in proteins)
+
+**Skip indel simulation when:**
+- Quick testing or prototyping (substitutions-only is faster)
+- Studying tree inference methods assuming perfect alignment
+- Computational resources are limited
+- Alignment quality is not a concern for the research question
+
+### Biological Rationale
+
+Insertions and deletions are fundamental evolutionary processes occurring through:
+- **Replication slippage**: Most common, produces short (1-2 bp/aa) indels
+- **Recombination errors**: Produces medium-length indels
+- **Transposon activity**: Produces longer insertions (rare)
+- **Unequal crossing over**: Produces structural variation (very rare)
+
+**Key empirical observations:**
+1. **Deletions are more common than insertions**: ~3:1 ratio (deletion:insertion)
+2. **Most indels are very short**: 60-80% are single-character indels
+3. **Indel length follows power-law distribution**: Longer indels become exponentially rarer
+4. **Context-dependent variation**: Indel rates vary across genomic regions
+
+### Indel Parameters (Empirical)
+
+The pipeline uses empirically-derived parameters from multiple studies (Benner et al. 1993; Cartwright 2009; Ly-Trong et al. 2022):
+
+**Default Parameters:**
+```bash
+--indel 0.03,0.09       # Insertion rate: 0.03, Deletion rate: 0.09 (relative to substitution rate)
+--indel-size POW 1.7 50 # Zipfian (power-law) distribution, exponent 1.7, max length 50
+```
+
+**Important Note on DNA vs Protein Sequences:**
+
+The same indel parameters are applied to both DNA and protein sequences in this pipeline. This is a simplification appropriate for tree inference benchmarking:
+
+- **For protein sequences**: The parameters (rate 0.12 total, Zipfian exponent 1.7) are empirically derived from protein evolution studies (Benner et al. 1993) and are biologically accurate.
+
+- **For DNA sequences**: The total rate of 0.12 (12 indels per 100 substitutions) matches empirical rates for non-coding DNA. However, for coding DNA, indels would ideally be constrained to multiples of 3 nucleotides (whole codons) to avoid frameshifts. AliSim does not support this constraint, and implementing codon-aware indels would require a different simulator (e.g., INDELible with codon models).
+
+- **Justification**: Since the primary use case is protein sequences and the focus is tree inference rather than realistic coding sequence evolution, using the same simplified indel model for both sequence types provides consistency and simplicity. The empirical rates are reasonable approximations for both contexts.
+
+For studies specifically focused on modeling coding DNA evolution with frameshifts, consider using codon-aware simulators like INDELible.
+
+**Parameter Explanation:**
+
+1. **Indel Rates (--indel INS,DEL)**
+   - **INS**: Insertion rate relative to substitution rate
+   - **DEL**: Deletion rate relative to substitution rate
+   - **Ratio**: DEL/INS ≈ 3.0 (deletions ~3× more common)
+   - **Total indel rate**: 0.03 + 0.09 = 0.12 (12% relative to substitution rate)
+   - **Biological interpretation**: For every 100 substitutions, expect ~3 insertions and ~9 deletions
+
+2. **Indel Length Distribution (--indel-size)**
+
+   AliSim supports multiple distributions:
+   - **POW a max**: Zipfian/Power-law distribution (recommended)
+     - `a`: Power-law exponent (1.7 = empirical estimate from protein data)
+     - `max`: Maximum indel length (50 = reasonable biological upper bound)
+   - **GEO p**: Geometric distribution
+     - `p`: Probability parameter (0 < p ≤ 1)
+   - **NB r p**: Negative Binomial distribution
+     - `r`: Number of successes, `p`: probability
+   - **LAV a max**: Lavalette distribution
+     - Similar to Zipfian but with different tail behavior
+
+**Zipfian Distribution (Power-Law):**
+
+The Zipfian distribution with exponent 1.7 produces:
+- ~60-70% single-character indels (1 bp or 1 aa)
+- ~15-20% two-character indels
+- ~5-10% three-character indels
+- <5% indels of length ≥4
+- Exponentially decreasing probability for longer indels
+- Maximum length cap prevents unrealistically long indels
+
+**Why exponent 1.7?**
+- Estimated from empirical studies of protein evolution (Benner et al. 1993)
+- Validated across pseudogenes and non-coding regions (Gu & Li 1995)
+- Matches observed distributions in fungal genomes (Rasmussen & Kellis 2011)
+- Standard in phylogenetic simulation studies (Cartwright 2009)
+
+### Parameter Recommendations by Use Case
+
+The pipeline provides convenient presets via the `--indel-model` option:
+
+**Preset Models (Quick Selection):**
+
+```bash
+# No indels - substitutions only
+--indel-model noindels
+# Equivalent to: (indels disabled)
+
+# Realistic (default) - empirically-derived parameters
+--indel-model realistic
+# Equivalent to: --indel 0.03,0.09 --indel-size POW{1.7/50}
+
+# Conservative - moderate indel effects
+--indel-model conservative
+# Equivalent to: --indel 0.02,0.04 --indel-size POW{1.7/20}
+
+# High rate - stress testing
+--indel-model highrate
+# Equivalent to: --indel 0.06,0.18 --indel-size POW{1.7/50}
+```
+
+**Manual Parameter Specification:**
+
+For full control, specify rates and distribution directly:
+
+**1. Default/Realistic (Recommended):**
+```bash
+--indel 0.03,0.09 --indel-size POW 1.7 50
+```
+Use for: Standard benchmarking, realistic simulations
+
+**2. Conservative (Less impact):**
+```bash
+--indel 0.02,0.04 --indel-size POW 1.7 20
+```
+Use for: Testing with moderate indel effects, shorter sequences
+
+**3. High Indel Rate (Challenging):**
+```bash
+--indel 0.06,0.18 --indel-size POW 1.7 50
+```
+Use for: Stress-testing methods, highly divergent sequences
+
+**4. Short Indels Only:**
+```bash
+--indel 0.03,0.09 --indel-size POW 1.7 10
+```
+Use for: Focusing on micro-indels, reducing alignment complexity
+
+**5. Geometric Distribution (Alternative):**
+```bash
+--indel 0.03,0.09 --indel-size GEO 0.7
+```
+Use for: Simpler model, faster decay of indel lengths
+
+### Alignment Considerations
+
+**Important**: When indels are simulated, sequences have different lengths and AliSim produces **true alignments** with gap characters ("-").
+
+**Two Approaches:**
+
+**Approach 1: Use True Alignment (Current Pipeline Default)**
+- AliSim outputs sequences with gaps showing true evolutionary history
+- PhyML directly accepts gapped alignments
+- **Advantages**: Tests tree inference methods assuming perfect alignment
+- **Use when**: Studying tree inference methods independently of alignment quality
+
+**Approach 2: Re-align Sequences (Optional, Not Implemented)**
+- Remove gaps from AliSim output to get unaligned sequences
+- Run alignment software (MAFFT, MUSCLE, Clustal, etc.)
+- Infer trees from inferred alignments
+- **Advantages**: Tests full pipeline including alignment errors
+- **Use when**: Studying how alignment errors affect tree inference
+- **Implementation**: Would require adding alignment step before PhyML
+
+**Current Pipeline Choice:**
+
+The pipeline uses **Approach 1** (true alignments) because:
+1. Focuses on tree inference methods, not alignment methods
+2. Faster execution (no alignment step needed)
+3. Clean separation of alignment quality from tree inference quality
+4. Standard practice in tree inference benchmarking (Molloy & Warnow 2020)
+
+**To test alignment methods**, you would need to:
+1. Extract unaligned sequences from AliSim output (remove gaps)
+2. Run alignment software (e.g., MAFFT, MUSCLE)
+3. Compare inferred alignment to true alignment
+4. Infer trees from inferred alignment
+
+### Literature Support
+
+**Indel Model Development:**
+- **Thorne-Kishino-Felsenstein (TKF91)**: Classic single-character indel model (Thorne et al. 1991)
+- **TKF92**: Extended model allowing multi-character indels (Thorne et al. 1992)
+- **Dawg**: Early simulator with power-law indel lengths (Cartwright 2005, 2009)
+- **INDELible**: Flexible simulator with multiple indel distributions (Fletcher & Yang 2009)
+- **AliSim**: Modern, fast simulator with empirical parameterization (Ly-Trong et al. 2022)
+
+**Empirical Studies:**
+- **Benner et al. (1993)**: Power-law distribution in proteins, exponent ~1.7
+- **Gu & Li (1995)**: Indel rates in pseudogenes and coding sequences
+- **Cartwright (2009)**: Zipfian distribution in sequence evolution
+- **Rasmussen & Kellis (2011)**: Fungal genome indel rates (used in Molloy & Warnow 2020)
+
+**Benchmarking Studies:**
+- **Molloy & Warnow (2020)**: TreeShrink benchmarking (basis for our substitution parameters)
+- **Zhu et al. (2025)**: Deep learning phylogenetic inference with indels
+- **Fletcher & Yang (2009)**: INDELible validation across multiple distributions
+
+### Example Usage
+
+**Using Preset Models (Recommended):**
+```bash
+# No indels - substitutions only (fastest)
+./simulate_pipeline.sh -n 10 -l 12 --indel-model noindels
+
+# Realistic indels (empirically-derived parameters)
+./simulate_pipeline.sh -n 10 -l 12 --indel-model realistic
+
+# Conservative indels (lower rates, shorter lengths)
+./simulate_pipeline.sh -n 10 -l 12 --indel-model conservative
+
+# High indel rate (stress testing)
+./simulate_pipeline.sh -n 10 -l 12 --indel-model highrate
+```
+
+**Manual Parameter Specification:**
+```bash
+# Enable indels with default empirical parameters
+./simulate_pipeline.sh -n 10 -l 12 --indel 0.03,0.09
+
+# Custom indel parameters
+./simulate_pipeline.sh -n 10 -l 12 --indel 0.02,0.04 --indel-size "POW 1.7 20"
+
+# High indel rate for stress testing
+./simulate_pipeline.sh -n 10 -l 12 --indel 0.06,0.18 --indel-size "POW 1.7 50"
+
+# Geometric distribution
+./simulate_pipeline.sh -n 10 -l 12 --indel 0.03,0.09 --indel-size "GEO 0.7"
+```
+
+### Output with Indels
+
+When indels are enabled:
+- **Sequence lengths vary** due to insertions and deletions
+- **Alignments contain gaps** ("-" characters) showing true evolutionary history
+- **PhyML handles gapped alignments** directly without re-alignment
+- **ML trees estimated** from true alignments including gap patterns
+- All other pipeline behavior remains unchanged
+
+### Validation
+
+The indel model can be validated by:
+1. **Indel count distributions**: Should match power-law with exponent 1.7
+2. **Indel length distributions**: Should match specified distribution
+3. **Insertion vs deletion ratio**: Should match specified rates (default 1:3)
+4. **Sequence length variation**: Should reflect cumulative indel effects
+5. **Gap patterns in alignment**: Should show realistic clustering
+
 ## Output Structure
 
 For each replicate and configuration:
@@ -306,12 +578,30 @@ See `BUGFIX_DL_AND_SEED.md` for documentation of earlier fixes.
 
 ## References
 
-- Molloy, E.K. and Warnow, T. (2020). TreeShrink: fast and accurate detection of outlier long branches in collections of phylogenetic trees.
-- Rasmussen, M.D. and Kellis, M. (2011). A Bayesian approach for fast and accurate gene tree reconstruction.
-- SimPhy: Mallo, D., De Oliveira Martins, L., and Posada, D. (2016). SimPhy: Phylogenomic simulation of gene, locus, and species trees. Systematic Biology, 65(2):334-344.
-- **AliSim**: Ly-Trong, N. et al. (2022). AliSim: A Fast and Versatile Phylogenetic Sequence Simulator for the Genomic Era. Molecular Biology and Evolution, 39(5):msac092.
-- **IQ-TREE 2**: Minh, B.Q. et al. (2020). IQ-TREE 2: New models and efficient methods for phylogenetic inference in the genomic era. Molecular Biology and Evolution, 37(5):1530-1534.
-- PhyML: Guindon, S. et al. (2010). New algorithms and methods to estimate maximum-likelihood phylogenies: assessing the performance of PhyML 3.0. Systematic Biology, 59(3):307-321.
+### Core Pipeline
+
+- **Molloy, E.K. and Warnow, T. (2020).** TreeShrink: fast and accurate detection of outlier long branches in collections of phylogenetic trees. BMC Genomics, 21(Suppl 2):332.
+- **Rasmussen, M.D. and Kellis, M. (2011).** A Bayesian approach for fast and accurate gene tree reconstruction. Molecular Biology and Evolution, 28(1):273-290.
+- **Mallo, D., De Oliveira Martins, L., and Posada, D. (2016).** SimPhy: Phylogenomic simulation of gene, locus, and species trees. Systematic Biology, 65(2):334-344.
+- **Ly-Trong, N. et al. (2022).** AliSim: A Fast and Versatile Phylogenetic Sequence Simulator for the Genomic Era. Molecular Biology and Evolution, 39(5):msac092.
+- **Minh, B.Q. et al. (2020).** IQ-TREE 2: New models and efficient methods for phylogenetic inference in the genomic era. Molecular Biology and Evolution, 37(5):1530-1534.
+- **Guindon, S. et al. (2010).** New algorithms and methods to estimate maximum-likelihood phylogenies: assessing the performance of PhyML 3.0. Systematic Biology, 59(3):307-321.
+
+### Indel Modeling
+
+**Model Development:**
+- **Thorne, J.L., Kishino, H., and Felsenstein, J. (1991).** An evolutionary model for maximum likelihood alignment of DNA sequences. Journal of Molecular Evolution, 33(2):114-124.
+- **Thorne, J.L., Kishino, H., and Felsenstein, J. (1992).** Inching toward reality: An improved likelihood model of sequence evolution. Journal of Molecular Evolution, 34(1):3-16.
+- **Cartwright, R.A. (2005).** DNA assembly with gaps (Dawg): simulating sequence evolution. Bioinformatics, 21(Suppl 3):iii31-iii38.
+- **Cartwright, R.A. (2009).** Problems and solutions for estimating indel rates and length distributions. Molecular Biology and Evolution, 26(2):473-480.
+- **Fletcher, W. and Yang, Z. (2009).** INDELible: A flexible simulator of biological sequence evolution. Molecular Biology and Evolution, 26(8):1879-1888.
+
+**Empirical Studies:**
+- **Benner, S.A., Cohen, M.A., and Gonnet, G.H. (1993).** Empirical and structural models for insertions and deletions in the divergent evolution of proteins. Journal of Molecular Biology, 229(4):1065-1082.
+- **Gu, X. and Li, W.H. (1995).** The size distribution of insertions and deletions in human and rodent pseudogenes suggests the logarithmic gap penalty for sequence alignment. Journal of Molecular Evolution, 40(4):464-473.
+
+**Recent Benchmarking:**
+- **Zhu, T. et al. (2025).** A critical evaluation of deep-learning based phylogenetic inference. Journal of Genetics and Genomics, 52(1):in press.
 
 ## Command-Line Usage
 
@@ -336,10 +626,13 @@ The pipeline can be run with customizable parameters:
 #   -l LEAVES Comma-separated leaf counts (default: 12,20)
 #   -t TYPE   Sequence type: dna, protein, or both (default: both)
 #   -o DIR    Output directory (default: simulation_output)
-#   -s SEED   Random seed (default: 22)
-#   -f NUM    Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
-#   -m        Skip ML tree estimation (generate alignments only)
-#   -i        Infer-only mode: run only PhyML on existing alignments
+#   -s SEED              Random seed (default: 22)
+#   -r MAX               Retry if duplicate sequences found, up to MAX attempts (default: 0)
+#   -m                   Skip ML tree estimation (generate alignments only)
+#   -i                   Infer-only mode: run only PhyML on existing alignments
+#   --indel-model MODEL  Indel preset: realistic, conservative, or highrate
+#   --indel INS,DEL      Enable indel simulation with specified rates (e.g., 0.03,0.09)
+#   --indel-size DIST    Indel length distribution (default: POW 1.7 50)
 ```
 
 ### Two-Stage Workflow

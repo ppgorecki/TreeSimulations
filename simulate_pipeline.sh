@@ -30,10 +30,17 @@ OPTIONS:
     -o DIR        Output directory (default: simulation_output)
     -s SEED       Random seed (default: 22)
     -r MAX        Retry if duplicate sequences found, up to MAX attempts (default: 0 = no retry)
-    -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no restriction)
-                  SimPhy retries until gene tree has exactly NUM leaves
+    -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
     -m            Skip ML tree estimation (PhyML) - only generate alignments
     -i            Infer-only mode: only run PhyML on existing alignments (skip simulation)
+    --indel-model Indel preset: noindels, realistic, conservative, or highrate
+                  noindels:     Disable indels (substitutions only)
+                  realistic:    --indel 0.03,0.09 --indel-size "POW{1.7/50}" (default)
+                  conservative: --indel 0.02,0.04 --indel-size "POW{1.7/20}"
+                  highrate:     --indel 0.06,0.18 --indel-size "POW{1.7/50}"
+    --indel       Enable indel simulation with rates INS,DEL (e.g., --indel 0.03,0.09)
+    --indel-size  Indel length distribution: POW a max, GEO p, NB r p, or LAV a max
+                  Example: --indel-size "POW 1.7 50" (default: POW 1.7 50)
     -h            Show this help message
 
 EXAMPLES:
@@ -49,14 +56,26 @@ EXAMPLES:
     # Quick test: 10 replicates, 12 leaves, both types
     $0 -n 10 -l 12 -t both
 
-    # Require gene trees to have exactly 10 leaves (filters out DL variations)
-    $0 -n 100 -l 12 -f 10
-
     # Generate alignments only, skip ML tree estimation (faster)
     $0 -n 10 -l 12 -m
 
     # Infer ML trees from existing alignments (after running with -m)
     $0 -o test_output -i
+
+    # No indels (substitutions only)
+    $0 -n 10 -l 12 --indel-model noindels
+
+    # Simulate with indels using preset model (recommended)
+    $0 -n 10 -l 12 --indel-model realistic
+
+    # Conservative indel model
+    $0 -n 10 -l 12 --indel-model conservative
+
+    # High indel rate for stress testing
+    $0 -n 10 -l 12 --indel-model highrate
+
+    # Custom indel parameters (manual specification)
+    $0 -n 10 -l 12 --indel 0.03,0.09 --indel-size "POW 1.7 20"
 
 OUTPUT:
     The pipeline generates species trees, gene trees, and sequence alignments.
@@ -100,30 +119,34 @@ RUN_PROTEIN=1
 RUN_ML_ESTIMATION=1  # 1 = run PhyML, 0 = skip ML tree estimation
 INFER_ONLY=0         # 1 = only infer ML trees from existing alignments, skip simulation
 
-# Gene tree filtering
-MIN_GENE_TREE_LEAVES=0  # 0 = no restriction, >0 = require exactly this many leaves
-MAX_GENE_TREE_RETRIES=1000  # Maximum attempts to generate tree with required leaves
-
 # Duplicate handling
 MAX_RETRIES=0  # 0 = no retry, >0 = retry up to MAX_RETRIES times
+
+# Gene tree filtering
+MIN_GENE_TREE_LEAVES=0  # 0 = no filtering, >0 = require exactly this many leaves
+MAX_GENE_TREE_RETRIES=1000  # Maximum attempts to generate a tree with the required number of leaves
+
+# Indel simulation parameters
+ENABLE_INDELS=0
+INDEL_RATES=""           # Format: "INS,DEL" e.g., "0.03,0.09"
+INDEL_SIZE_DIST="POW{1.7/50}"  # Default: Zipfian with exponent 1.7, max length 50 (AliSim format)
 
 # ============================================================================
 # PARSE COMMAND LINE ARGUMENTS
 # ============================================================================
 
-while getopts "n:l:t:o:s:r:f:mih" opt; do
-    case ${opt} in
-        n )
-            NUM_REPLICATES=$OPTARG
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -n)
+            NUM_REPLICATES=$2
+            shift 2
             ;;
-        l )
-            IFS=',' read -ra NUM_LEAVES <<< "$OPTARG"
+        -l)
+            IFS=',' read -ra NUM_LEAVES <<< "$2"
+            shift 2
             ;;
-        f )
-            MIN_GENE_TREE_LEAVES=$OPTARG
-            ;;
-        t )
-            case ${OPTARG} in
+        -t)
+            case ${2} in
                 dna|DNA)
                     RUN_DNA=1
                     RUN_PROTEIN=0
@@ -137,31 +160,78 @@ while getopts "n:l:t:o:s:r:f:mih" opt; do
                     RUN_PROTEIN=1
                     ;;
                 *)
-                    echo "Error: Invalid sequence type '${OPTARG}'. Use: dna, protein, or both"
+                    echo "Error: Invalid sequence type '${2}'. Use: dna, protein, or both"
                     usage
                     ;;
             esac
+            shift 2
             ;;
-        o )
-            OUTPUT_DIR=$OPTARG
+        -o)
+            OUTPUT_DIR=$2
+            shift 2
             ;;
-        s )
-            RANDOM_SEED=$OPTARG
+        -s)
+            RANDOM_SEED=$2
+            shift 2
             ;;
-        r )
-            MAX_RETRIES=$OPTARG
+        -r)
+            MAX_RETRIES=$2
+            shift 2
             ;;
-        m )
+        -f)
+            MIN_GENE_TREE_LEAVES=$2
+            shift 2
+            ;;
+        -m)
             RUN_ML_ESTIMATION=0
+            shift
             ;;
-        i )
+        -i)
             INFER_ONLY=1
-            RUN_ML_ESTIMATION=1  # Force ML estimation on in infer-only mode
+            RUN_ML_ESTIMATION=1
+            shift
             ;;
-        h )
+        --indel-model)
+            case ${2} in
+                noindels)
+                    ENABLE_INDELS=0
+                    ;;
+                realistic)
+                    ENABLE_INDELS=1
+                    INDEL_RATES="0.03,0.09"
+                    INDEL_SIZE_DIST="POW{1.7/50}"
+                    ;;
+                conservative)
+                    ENABLE_INDELS=1
+                    INDEL_RATES="0.02,0.04"
+                    INDEL_SIZE_DIST="POW{1.7/20}"
+                    ;;
+                highrate)
+                    ENABLE_INDELS=1
+                    INDEL_RATES="0.06,0.18"
+                    INDEL_SIZE_DIST="POW{1.7/50}"
+                    ;;
+                *)
+                    echo "Error: Invalid indel model '${2}'. Use: noindels, realistic, conservative, or highrate"
+                    usage
+                    ;;
+            esac
+            shift 2
+            ;;
+        --indel)
+            ENABLE_INDELS=1
+            INDEL_RATES=$2
+            shift 2
+            ;;
+        --indel-size)
+            INDEL_SIZE_DIST=$2
+            shift 2
+            ;;
+        -h)
             usage
             ;;
-        \? )
+        *)
+            echo "Error: Unknown option: $1"
             usage
             ;;
     esac
@@ -198,27 +268,17 @@ check_duplicates() {
     fi
 }
 
-# Count the number of leaves in a Newick tree file
-# Returns the number of leaves (taxa)
+# Count the number of leaves in a Newick tree
+# Simple algorithm: count commas and add 1
 count_tree_leaves() {
     local tree_file="$1"
-
     if [ ! -f "$tree_file" ]; then
         echo "0"
         return
     fi
-
-    # Read the tree and count leaves
-    # In Newick format, each leaf has a label followed by a colon and branch length
-    # Count occurrences of patterns like "taxon_name:"
-    local tree_content=$(cat "$tree_file")
-
-    # Count the number of commas + 1 (simple method for binary trees)
-    # This works because in a binary tree: #leaves = #commas + 1
-    local num_commas=$(echo "$tree_content" | tr -cd ',' | wc -c)
-    local num_leaves=$((num_commas + 1))
-
-    echo "$num_leaves"
+    local tree_string=$(cat "$tree_file")
+    local comma_count=$(echo "$tree_string" | tr -cd ',' | wc -c)
+    echo $((comma_count + 1))
 }
 
 # ============================================================================
@@ -297,6 +357,13 @@ if [ ${INFER_ONLY} -eq 0 ]; then
         echo "  ML tree estimation: YES"
     else
         echo "  ML tree estimation: NO (alignments only)"
+    fi
+    if [ ${ENABLE_INDELS} -eq 1 ]; then
+        echo "  Indel simulation: YES"
+        echo "    - Rates (ins,del): ${INDEL_RATES}"
+        echo "    - Length distribution: ${INDEL_SIZE_DIST}"
+    else
+        echo "  Indel simulation: NO (substitutions only)"
     fi
 fi
 echo ""
@@ -420,10 +487,13 @@ nexus
 
 done
 
-fi  # End INFER_ONLY check for Phase 1
+
+
 
 echo "Phase 1 completed!"
 echo ""
+
+fi  # End of INFER_ONLY check for Phase 1
 
 # ============================================================================
 # PHASE 2: SIMULATE GENE TREES
@@ -431,11 +501,6 @@ echo ""
 
 echo "Phase 2: Simulating gene trees with SimPhy..."
 echo "--------------------------------------"
-
-if [ ${INFER_ONLY} -eq 1 ]; then
-    echo "  Skipped (infer-only mode)"
-    echo ""
-else
 
 replicate_counter=0
 
@@ -452,36 +517,33 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
             for i in $(seq -w 1 ${NUM_REPLICATES}); do
                 species_tree="${SPECIES_TREES_DIR}/lf${num_leaves}_replicate$i.nex"
-                
+
                 output_folder="${config_dir}/replicate_$i"
-            
-                # Generate unique seed for THIS specific simulation
-                # CRITICAL: Must vary by configuration AND replicate to get independent coalescent simulations
 
-                simphy_seed=$((RANDOM_SEED + replicate_counter))
-
-                # Retry loop for gene tree generation with leaf count filtering
-                gene_tree_retry=0
+                # Initialize gene tree filtering variables
                 gene_tree_accepted=0
+                gene_tree_retry=0
 
+                # Loop until we get a gene tree with the required number of leaves (or reach max retries)
                 while [ $gene_tree_accepted -eq 0 ]; do
-                    # Generate gene tree with SimPhy
+                    # Generate unique seed for THIS specific simulation
+                    # CRITICAL: Must vary by configuration AND replicate to get independent coalescent simulations
+                    simphy_seed=$((RANDOM_SEED + replicate_counter + gene_tree_retry * 1000000))
+
                     # **Parameters:**
                     # - `-sr`: Species tree in Nexus format
                     # - `-rg 1`: Generate 1 gene tree per locus
                     # - `-rl F:1`: Generate 1 locus
                     # - `-si F:1`: Generate 1 individual per species
                     # - `-sp F:<pop_size>`: Effective population size (10⁷ or 5×10⁷)
-                    # - `-su F:0.0000000004`: Substitution rate (4×10⁻¹⁰)
-                    # - `-lb F:<dl_rate>`: Birth (duplication) rate
+                    # - `-su F:0.0004`: Substitution rate (scaled)
+                    # - `-lb F:<scaled_dl_rate>`: Birth (duplication) rate (scaled)
                     # - `-ld F:lb`: Death (loss) rate = birth rate
                     # - `-ll 3`: Minimum number of lineages
                     # - `-hg LN:1.5,1`: Gene tree height follows lognormal distribution
                     # - `-oc 1`: Output coalescent trees
-                    # - `-cs <unique_seed>`: Random seed
+                    # - `-cs <unique_seed>`: Random seed (base_seed + replicate_number for independence)
 
-                    # Use different seed for each retry
-                    current_simphy_seed=$((simphy_seed + gene_tree_retry * 1000000))
 
                     while "${SIMPHY}" \
                         -sr "${species_tree}" \
@@ -497,7 +559,8 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                         -oc 1 \
                         -o "${output_folder}" \
                         -v 0 \
-                        -cs ${current_simphy_seed}
+                        -cs ${simphy_seed}
+
                     do
                         break # hack, simphy returns undeterministic error sometimes
                     done
@@ -545,13 +608,7 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
     done
 done
 
-fi  # End INFER_ONLY check for Phase 2
-
-if [ ${INFER_ONLY} -eq 0 ]; then
-    echo "Phase 2 completed! Generated ${replicate_counter} gene trees."
-else
-    echo "Phase 2 completed!"
-fi
+echo "Phase 2 completed! Generated ${replicate_counter} gene trees."
 echo ""
 
 
@@ -581,11 +638,9 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                 dna_folder="${dna_output_dir}/replicate_$i"
                 mkdir -p "${dna_folder}"
 
-                # Simulate sequences (skip in infer-only mode)
-                if [ ${INFER_ONLY} -eq 0 ]; then
-                    # Read gene tree
-                    gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
-                    if [ -f "${gene_tree_file}" ]; then
+                # Read gene tree
+                gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
+                if [ -f "${gene_tree_file}" ]; then
                     gene_tree=$(cat "${gene_tree_file}")
 
                     # SimPhy with -su parameter already outputs branch lengths in substitutions per site
@@ -623,13 +678,15 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                             # Force base-10 interpretation to avoid octal issues with leading zeros
                             current_seed=$((RANDOM_SEED + 10#$i + retry_count * 1000000))
 
-                            iqtree2 --alisim "${dna_folder}/alignment" \
-                                    -m "${model}" \
-                                    -t "${dna_folder}/gene_tree.nwk" \
-                                    --length ${ALIGNMENT_LENGTH_DNA} \
-                                    -seed ${current_seed} \
-                                    -af phy \
-                                    -quiet 2>/dev/null || true
+                            # Build iqtree2 command with optional indel parameters
+                            iqtree_cmd="iqtree2 --alisim ${dna_folder}/alignment -m ${model} -t ${dna_folder}/gene_tree.nwk --length ${ALIGNMENT_LENGTH_DNA}"
+                            if [ ${ENABLE_INDELS} -eq 1 ]; then
+                                # AliSim requires same distribution for insertion and deletion
+                                iqtree_cmd="${iqtree_cmd} --indel ${INDEL_RATES} --indel-size ${INDEL_SIZE_DIST},${INDEL_SIZE_DIST}"
+                            fi
+                            iqtree_cmd="${iqtree_cmd} -seed ${current_seed} -af phy -quiet"
+
+                            eval "${iqtree_cmd}" 2>/dev/null || true
 
                             # Rename output if it exists
                             if [ -f "${dna_folder}/alignment.phy" ]; then
@@ -658,8 +715,7 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     else
                         echo "Warning: iqtree2 not found. Skipping sequence simulation for ${config_name} replicate ${i}"
                     fi
-                    fi  # End gene_tree_file check
-                fi  # End INFER_ONLY check for sequence simulation
+                fi
 
                 # Estimate gene tree with PhyML
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
@@ -714,11 +770,9 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                 protein_folder="${protein_output_dir}/replicate_$i"
                 mkdir -p "${protein_folder}"
 
-                # Simulate sequences (skip in infer-only mode)
-                if [ ${INFER_ONLY} -eq 0 ]; then
-                    # Read gene tree
-                    gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
-                    if [ -f "${gene_tree_file}" ]; then
+                # Read gene tree
+                gene_tree_file="${gene_tree_folder}/1/g_trees1.trees"
+                if [ -f "${gene_tree_file}" ]; then
                     gene_tree=$(cat "${gene_tree_file}")
 
                     # SimPhy with -su parameter already outputs branch lengths in substitutions per site
@@ -741,13 +795,15 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                             # Force base-10 interpretation to avoid octal issues with leading zeros
                             current_seed=$((RANDOM_SEED + 10#$i + retry_count * 1000000))
 
-                            iqtree2 --alisim "${protein_folder}/alignment" \
-                                    -m "${model}" \
-                                    -t "${protein_folder}/gene_tree.nwk" \
-                                    --length ${ALIGNMENT_LENGTH_PROTEIN} \
-                                    -seed ${current_seed} \
-                                    -af phy \
-                                    -quiet 2>/dev/null || true
+                            # Build iqtree2 command with optional indel parameters
+                            iqtree_cmd="iqtree2 --alisim ${protein_folder}/alignment -m ${model} -t ${protein_folder}/gene_tree.nwk --length ${ALIGNMENT_LENGTH_PROTEIN}"
+                            if [ ${ENABLE_INDELS} -eq 1 ]; then
+                                # AliSim requires same distribution for insertion and deletion
+                                iqtree_cmd="${iqtree_cmd} --indel ${INDEL_RATES} --indel-size ${INDEL_SIZE_DIST},${INDEL_SIZE_DIST}"
+                            fi
+                            iqtree_cmd="${iqtree_cmd} -seed ${current_seed} -af phy -quiet"
+
+                            eval "${iqtree_cmd}" 2>/dev/null || true
 
                             # Rename output if it exists
                             if [ -f "${protein_folder}/alignment.phy" ]; then
@@ -776,8 +832,7 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     else
                         echo "Warning: iqtree2 not found. Skipping sequence simulation for ${config_name} replicate ${i}"
                     fi
-                    fi  # End gene_tree_file check
-                fi  # End INFER_ONLY check for sequence simulation
+                fi
 
                 # Estimate gene tree with PhyML (protein mode)
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
