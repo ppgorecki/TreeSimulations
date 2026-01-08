@@ -877,45 +877,88 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
                         # Convert FASTA to PHYLIP format for PhyML
                         if [ -f "${dna_folder}/alignment_INFERRED.fasta" ]; then
-                            # Use iqtree2 to convert format (it's already available)
-                            iqtree2 -s "${dna_folder}/alignment_INFERRED.fasta" --print-phylip -quiet 2>/dev/null || true
+                            # Use Python to convert FASTA to PHYLIP (sequential format)
+                            python3 -c "
+import sys
+from pathlib import Path
 
-                            # iqtree2 creates .phy file
-                            if [ -f "${dna_folder}/alignment_INFERRED.fasta.phy" ]; then
-                                mv "${dna_folder}/alignment_INFERRED.fasta.phy" "${dna_folder}/alignment_INFERRED.phy"
-                            fi
+fasta_file = Path('${dna_folder}/alignment_INFERRED.fasta')
+phylip_file = Path('${dna_folder}/alignment_INFERRED.phy')
+
+# Read FASTA
+sequences = {}
+current_id = None
+with open(fasta_file) as f:
+    for line in f:
+        line = line.strip()
+        if line.startswith('>'):
+            current_id = line[1:].split()[0][:10]  # Max 10 chars for phylip
+            sequences[current_id] = ''
+        elif current_id:
+            sequences[current_id] += line
+
+# Write PHYLIP (sequential format)
+if sequences:
+    seq_len = len(next(iter(sequences.values())))
+    with open(phylip_file, 'w') as f:
+        f.write(f' {len(sequences)} {seq_len}\\n')
+        for seq_id, seq in sequences.items():
+            f.write(f'{seq_id:<10} {seq}\\n')
+"
                         fi
                     fi
                 fi
 
                 # Estimate gene tree with PhyML
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
-                    # Determine which alignment to use
-                    if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${dna_folder}/alignment_INFERRED.phy" ]; then
-                        alignment_file="${dna_folder}/alignment_INFERRED.phy"
-                        ml_tree_suffix="inferred"
-                    elif [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
-                        alignment_file="${dna_folder}/alignment_TRUE.phy"
-                        ml_tree_suffix="true"
+                    # When INFER_ALIGNMENT=1, create trees from BOTH alignments for comparison
+                    if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                        # Estimate tree from TRUE alignment
+                        if [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
+                            phyml -i "${dna_folder}/alignment_TRUE.phy" \
+                                  -m GTR \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
+
+                            if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                                cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${dna_folder}/ml_gene_tree_TRUE.nwk"
+                            fi
+                        fi
+
+                        # Estimate tree from INFERRED alignment
+                        if [ -f "${dna_folder}/alignment_INFERRED.phy" ]; then
+                            phyml -i "${dna_folder}/alignment_INFERRED.phy" \
+                                  -m GTR \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
+
+                            if [ -f "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                                cp "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
+                                   "${dna_folder}/ml_gene_tree_INFERRED.nwk"
+                            fi
+                        fi
                     else
-                        alignment_file=""
-                    fi
+                        # Only create tree from TRUE alignment
+                        if [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
+                            phyml -i "${dna_folder}/alignment_TRUE.phy" \
+                                  -m GTR \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
 
-                    if [ -n "${alignment_file}" ]; then
-                        phyml -i "${alignment_file}" \
-                              -m GTR \
-                              -c 4 \
-                              -a e \
-                              -b 0 \
-                              -o tlr \
-                              --quiet 2>/dev/null
-
-                        # Root the tree using midpoint rooting
-                        if [ -f "${alignment_file}_phyml_tree.txt" ]; then
-                            # This would use URec or a similar tool for midpoint-plateau rooting
-                            # For now, we'll just copy the ML tree
-                            cp "${alignment_file}_phyml_tree.txt" \
-                               "${dna_folder}/ml_gene_tree.nwk"
+                            if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                                cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${dna_folder}/ml_gene_tree.nwk"
+                            fi
                         fi
                     fi
                 fi
@@ -1044,44 +1087,91 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
                         # Convert FASTA to PHYLIP format for PhyML
                         if [ -f "${protein_folder}/alignment_INFERRED.fasta" ]; then
-                            # Use iqtree2 to convert format (it's already available)
-                            iqtree2 -s "${protein_folder}/alignment_INFERRED.fasta" --print-phylip -quiet 2>/dev/null || true
+                            # Use Python to convert FASTA to PHYLIP (sequential format)
+                            python3 -c "
+import sys
+from pathlib import Path
 
-                            # iqtree2 creates .phy file
-                            if [ -f "${protein_folder}/alignment_INFERRED.fasta.phy" ]; then
-                                mv "${protein_folder}/alignment_INFERRED.fasta.phy" "${protein_folder}/alignment_INFERRED.phy"
-                            fi
+fasta_file = Path('${protein_folder}/alignment_INFERRED.fasta')
+phylip_file = Path('${protein_folder}/alignment_INFERRED.phy')
+
+# Read FASTA
+sequences = {}
+current_id = None
+with open(fasta_file) as f:
+    for line in f:
+        line = line.strip()
+        if line.startswith('>'):
+            current_id = line[1:].split()[0][:10]  # Max 10 chars for phylip
+            sequences[current_id] = ''
+        elif current_id:
+            sequences[current_id] += line
+
+# Write PHYLIP (sequential format)
+if sequences:
+    seq_len = len(next(iter(sequences.values())))
+    with open(phylip_file, 'w') as f:
+        f.write(f' {len(sequences)} {seq_len}\\n')
+        for seq_id, seq in sequences.items():
+            f.write(f'{seq_id:<10} {seq}\\n')
+"
                         fi
                     fi
                 fi
 
                 # Estimate gene tree with PhyML (protein mode)
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
-                    # Determine which alignment to use
-                    if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${protein_folder}/alignment_INFERRED.phy" ]; then
-                        alignment_file="${protein_folder}/alignment_INFERRED.phy"
-                        ml_tree_suffix="inferred"
-                    elif [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
-                        alignment_file="${protein_folder}/alignment_TRUE.phy"
-                        ml_tree_suffix="true"
+                    # When INFER_ALIGNMENT=1, create trees from BOTH alignments for comparison
+                    if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                        # Estimate tree from TRUE alignment
+                        if [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
+                            phyml -i "${protein_folder}/alignment_TRUE.phy" \
+                                  -d aa \
+                                  -m WAG \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
+
+                            if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                                cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${protein_folder}/ml_gene_tree_TRUE.nwk"
+                            fi
+                        fi
+
+                        # Estimate tree from INFERRED alignment
+                        if [ -f "${protein_folder}/alignment_INFERRED.phy" ]; then
+                            phyml -i "${protein_folder}/alignment_INFERRED.phy" \
+                                  -d aa \
+                                  -m WAG \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
+
+                            if [ -f "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                                cp "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
+                                   "${protein_folder}/ml_gene_tree_INFERRED.nwk"
+                            fi
+                        fi
                     else
-                        alignment_file=""
-                    fi
+                        # Only create tree from TRUE alignment
+                        if [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
+                            phyml -i "${protein_folder}/alignment_TRUE.phy" \
+                                  -d aa \
+                                  -m WAG \
+                                  -c 4 \
+                                  -a e \
+                                  -b 0 \
+                                  -o tlr \
+                                  --quiet 2>/dev/null
 
-                    if [ -n "${alignment_file}" ]; then
-                        phyml -i "${alignment_file}" \
-                              -d aa \
-                              -m WAG \
-                              -c 4 \
-                              -a e \
-                              -b 0 \
-                              -o tlr \
-                              --quiet 2>/dev/null
-
-                        # Root the tree using midpoint rooting
-                        if [ -f "${alignment_file}_phyml_tree.txt" ]; then
-                            cp "${alignment_file}_phyml_tree.txt" \
-                               "${protein_folder}/ml_gene_tree.nwk"
+                            if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                                cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${protein_folder}/ml_gene_tree.nwk"
+                            fi
                         fi
                     fi
                 fi
