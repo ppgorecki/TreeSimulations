@@ -828,14 +828,15 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
                                 # Generate unaligned sequences if INFER_ALIGNMENT is enabled
                                 if [ ${INFER_ALIGNMENT} -eq 1 ]; then
-                                    # Also generate unaligned FASTA output
-                                    iqtree2 --alisim "${dna_folder}/unaligned" \
-                                            -m "${model}" \
-                                            -t "${dna_folder}/gene_tree.nwk" \
-                                            --length ${ALIGNMENT_LENGTH_DNA} \
-                                            -seed ${current_seed} \
-                                            --out-format fasta \
-                                            -quiet 2>/dev/null || true
+                                    # Build iqtree2 command for unaligned sequences with same indel parameters
+                                    iqtree_unaligned_cmd="iqtree2 --alisim ${dna_folder}/unaligned -m ${model} -t ${dna_folder}/gene_tree.nwk --length ${ALIGNMENT_LENGTH_DNA}"
+                                    if [ ${ENABLE_INDELS} -eq 1 ]; then
+                                        # Include same indel parameters as aligned version
+                                        iqtree_unaligned_cmd="${iqtree_unaligned_cmd} --indel ${INDEL_RATES} --indel-size ${INDEL_SIZE_DIST},${INDEL_SIZE_DIST}"
+                                    fi
+                                    iqtree_unaligned_cmd="${iqtree_unaligned_cmd} -seed ${current_seed} --out-format fasta -quiet"
+
+                                    eval "${iqtree_unaligned_cmd}" 2>/dev/null || true
 
                                     # Rename unaligned output
                                     if [ -f "${dna_folder}/unaligned.fa" ]; then
@@ -994,14 +995,15 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
 
                                 # Generate unaligned sequences if INFER_ALIGNMENT is enabled
                                 if [ ${INFER_ALIGNMENT} -eq 1 ]; then
-                                    # Also generate unaligned FASTA output
-                                    iqtree2 --alisim "${protein_folder}/unaligned" \
-                                            -m "${model}" \
-                                            -t "${protein_folder}/gene_tree.nwk" \
-                                            --length ${ALIGNMENT_LENGTH_PROTEIN} \
-                                            -seed ${current_seed} \
-                                            --out-format fasta \
-                                            -quiet 2>/dev/null || true
+                                    # Build iqtree2 command for unaligned sequences with same indel parameters
+                                    iqtree_unaligned_cmd="iqtree2 --alisim ${protein_folder}/unaligned -m ${model} -t ${protein_folder}/gene_tree.nwk --length ${ALIGNMENT_LENGTH_PROTEIN}"
+                                    if [ ${ENABLE_INDELS} -eq 1 ]; then
+                                        # Include same indel parameters as aligned version
+                                        iqtree_unaligned_cmd="${iqtree_unaligned_cmd} --indel ${INDEL_RATES} --indel-size ${INDEL_SIZE_DIST},${INDEL_SIZE_DIST}"
+                                    fi
+                                    iqtree_unaligned_cmd="${iqtree_unaligned_cmd} -seed ${current_seed} --out-format fasta -quiet"
+
+                                    eval "${iqtree_unaligned_cmd}" 2>/dev/null || true
 
                                     # Rename unaligned output
                                     if [ -f "${protein_folder}/unaligned.fa" ]; then
