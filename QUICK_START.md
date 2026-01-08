@@ -59,11 +59,23 @@ mafft --version
 # Use your own species tree (skips Phase 1)
 ./simulate_pipeline.sh -u my_species_tree.nwk -n 100
 
-# Infer alignments with MAFFT (instead of using true alignments)
-./simulate_pipeline.sh -n 100 -l 12 -a
+# Estimate ML trees only from MAFFT-inferred alignments (default)
+./simulate_pipeline.sh -n 100 -l 12 -a inferred
+
+# Estimate ML trees only from true alignments (no MAFFT)
+./simulate_pipeline.sh -n 100 -l 12 -a true
+
+# Estimate ML trees from both true and inferred alignments
+./simulate_pipeline.sh -n 100 -l 12 -a true,inferred
 
 # Combine user tree, MAFFT alignment, and indels
-./simulate_pipeline.sh -u my_tree.nwk -n 50 -a --indel-model realistic
+./simulate_pipeline.sh -u my_tree.nwk -n 50 -a inferred --indel-model realistic
+
+# Use only high duplication/loss rate
+./simulate_pipeline.sh -n 100 -l 12 --dl-model high
+
+# Use only medium ILS (less coalescent variation)
+./simulate_pipeline.sh -n 100 -l 12 --ils-model medium
 
 # Show all options
 ./simulate_pipeline.sh -h
@@ -103,10 +115,12 @@ Both scripts support the same options:
 | Output | `-o DIR` | `-o, --output DIR` | Output directory | simulation_output |
 | Seed | `-s SEED` | `-s, --seed SEED` | Random seed | 22 |
 | User Tree | `-u FILE` | N/A | User-provided species tree (Newick/Nexus, skips Phase 1) | - |
-| MAFFT Align | `-a` | N/A | Infer alignments with MAFFT instead of using true alignments | - |
+| ML Mode | `-a MODE` | N/A | ML tree inference: true, inferred, true,inferred, none | inferred |
 | Filter | `-f NUM` | N/A | Require gene trees with exactly NUM leaves | 0 (no filter) |
 | Skip ML | `-m` | N/A | Skip PhyML (alignments only) | - |
 | Infer-only | `-i` | N/A | Run only PhyML on existing alignments | - |
+| DL Model | `--dl-model` | N/A | Duplication/loss rates: low, medium, high, or list | low,medium,high |
+| ILS Model | `--ils-model` | N/A | ILS/population: low, medium, or list | low,medium |
 | Help | `-h` | `-h, --help` | Show help | - |
 
 ## What Gets Generated
