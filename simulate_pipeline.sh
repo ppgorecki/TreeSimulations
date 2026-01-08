@@ -26,6 +26,8 @@ OPTIONS:
     -n NUM        Number of replicates per configuration (default: 100)
     -l LEAVES     Comma-separated list of leaf counts (default: 12,20)
                   Example: -l 12,20,50
+    -u FILE       User-provided species tree file (Newick or Nexus format)
+                  When provided, Phase 1 is skipped and this tree is used for all replicates
     -t TYPE       Sequence type to simulate: dna, protein, or both (default: both)
     -o DIR        Output directory (default: simulation_output)
     -s SEED       Random seed (default: 22)
@@ -33,6 +35,8 @@ OPTIONS:
     -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
     -m            Skip ML tree estimation (PhyML) - only generate alignments
     -i            Infer-only mode: only run PhyML on existing alignments (skip simulation)
+    -a            Infer alignments with MAFFT instead of using true alignments
+                  Generates unaligned sequences and runs MAFFT before PhyML
     --dna-length NUM      DNA alignment length in base pairs (default: 1000)
     --protein-length NUM  Protein alignment length in amino acids (default: 333)
     --indel-model Indel preset: noindels, realistic, conservative, or highrate
@@ -58,11 +62,17 @@ EXAMPLES:
     # Quick test: 10 replicates, 12 leaves, both types
     $0 -n 10 -l 12 -t both
 
+    # Use a user-provided species tree (skips Phase 1)
+    $0 -u my_species_tree.nwk -n 100
+
     # Generate alignments only, skip ML tree estimation (faster)
     $0 -n 10 -l 12 -m
 
     # Infer ML trees from existing alignments (after running with -m)
     $0 -o test_output -i
+
+    # Infer alignments with MAFFT instead of using true alignments
+    $0 -n 10 -l 12 -a
 
     # No indels (substitutions only)
     $0 -n 10 -l 12 --indel-model noindels
@@ -101,6 +111,9 @@ EOF
 # Number of replicates
 NUM_REPLICATES=100
 
+# User species tree (if provided, Phase 1 is skipped)
+USER_SPECIES_TREE=""
+
 # Species tree parameters
 TREE_HEIGHT=1800000337.5   # years
 SPECIATION_RATE=1.8e-9     # events/year
@@ -126,6 +139,7 @@ RUN_DNA=1
 RUN_PROTEIN=1
 RUN_ML_ESTIMATION=1  # 1 = run PhyML, 0 = skip ML tree estimation
 INFER_ONLY=0         # 1 = only infer ML trees from existing alignments, skip simulation
+INFER_ALIGNMENT=0    # 1 = use MAFFT to infer alignments, 0 = use true alignments from AliSim
 
 # Duplicate handling
 MAX_RETRIES=0  # 0 = no retry, >0 = retry up to MAX_RETRIES times
@@ -151,6 +165,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -l)
             IFS=',' read -ra NUM_LEAVES <<< "$2"
+            shift 2
+            ;;
+        -u)
+            USER_SPECIES_TREE=$2
             shift 2
             ;;
         -t)
@@ -197,6 +215,10 @@ while [[ $# -gt 0 ]]; do
         -i)
             INFER_ONLY=1
             RUN_ML_ESTIMATION=1
+            shift
+            ;;
+        -a)
+            INFER_ALIGNMENT=1
             shift
             ;;
         --dna-length)
@@ -253,6 +275,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Validate user species tree if provided
+if [ -n "${USER_SPECIES_TREE}" ]; then
+    if [ ! -f "${USER_SPECIES_TREE}" ]; then
+        echo "Error: User species tree file not found: ${USER_SPECIES_TREE}"
+        exit 1
+    fi
+fi
+
 # Set directory paths based on output directory
 SPECIES_TREES_DIR="${OUTPUT_DIR}/species_trees"
 GENE_TREES_DIR="${OUTPUT_DIR}/gene_trees"
@@ -262,6 +292,32 @@ PROTEIN_DIR="${OUTPUT_DIR}/protein"
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+# Extract tree string from Newick or Nexus format file
+# Returns the tree string (Newick format)
+extract_tree_string() {
+    local tree_file="$1"
+
+    if [ ! -f "$tree_file" ]; then
+        echo ""
+        return 1
+    fi
+
+    # Read the file
+    local content=$(cat "$tree_file")
+
+    # Check if it's a Nexus file (contains #NEXUS or begin trees)
+    if echo "$content" | grep -qi "^#NEXUS\|begin trees"; then
+        # Extract tree from Nexus format
+        # Look for lines like: tree tree1 = (...)
+        # Extract everything after the '=' sign
+        echo "$content" | grep -i "tree.*=" | sed 's/^[^=]*=//' | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    else
+        # Assume it's already in Newick format
+        # Remove any leading/trailing whitespace and newlines
+        echo "$content" | tr -d '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+    fi
+}
 
 # Check if a PHYLIP alignment file contains duplicate sequences
 # Returns 0 if duplicates found, 1 if no duplicates
@@ -335,6 +391,17 @@ if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
     fi
 fi
 
+# Check for MAFFT (only if alignment inference is enabled)
+if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+    if command -v mafft &> /dev/null; then
+        echo "Found MAFFT in PATH"
+    else
+        echo "Warning: MAFFT not found in PATH"
+        echo "Alignment inference will fail"
+        echo "Install with: sudo apt-get install mafft"
+    fi
+fi
+
 echo ""
 
 # ============================================================================
@@ -350,7 +417,11 @@ if [ ${INFER_ONLY} -eq 1 ]; then
     echo "  Mode: INFER-ONLY (only run PhyML on existing alignments)"
 else
     echo "  Replicates: ${NUM_REPLICATES}"
-    echo "  Leaf counts: ${NUM_LEAVES[@]}"
+    if [ -n "${USER_SPECIES_TREE}" ]; then
+        echo "  User species tree: ${USER_SPECIES_TREE}"
+    else
+        echo "  Leaf counts: ${NUM_LEAVES[@]}"
+    fi
     echo "  Random seed: ${RANDOM_SEED}"
     if [ ${MIN_GENE_TREE_LEAVES} -gt 0 ]; then
         echo "  Gene tree filter: require exactly ${MIN_GENE_TREE_LEAVES} leaves"
@@ -373,6 +444,11 @@ if [ ${INFER_ONLY} -eq 0 ]; then
         echo "  ML tree estimation: YES"
     else
         echo "  ML tree estimation: NO (alignments only)"
+    fi
+    if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+        echo "  Alignment inference: YES (using MAFFT)"
+    else
+        echo "  Alignment inference: NO (using true alignments)"
     fi
     echo "  Alignment lengths:"
     if [ ${RUN_DNA} -eq 1 ]; then
@@ -411,7 +487,45 @@ echo "--------------------------------------"
 if [ ${INFER_ONLY} -eq 1 ]; then
     echo "  Skipped (infer-only mode)"
     echo ""
+elif [ -n "${USER_SPECIES_TREE}" ]; then
+    # Use user-provided species tree
+    echo "  Using user-provided species tree..."
+
+    # Extract tree string from the file
+    user_tree=$(extract_tree_string "${USER_SPECIES_TREE}")
+
+    if [ -z "$user_tree" ]; then
+        echo "Error: Failed to extract tree from ${USER_SPECIES_TREE}"
+        exit 1
+    fi
+
+    # Count leaves in the user tree
+    # Save to temp file to use count_tree_leaves function
+    temp_tree_file=$(mktemp)
+    echo "$user_tree" > "$temp_tree_file"
+    num_leaves=$(count_tree_leaves "$temp_tree_file")
+    rm -f "$temp_tree_file"
+
+    echo "  Detected ${num_leaves} leaves in user tree"
+
+    # Override NUM_LEAVES array with the detected leaf count
+    NUM_LEAVES=($num_leaves)
+
+    # Create replicate files with the same tree
+    echo "  Creating ${NUM_REPLICATES} replicate files..."
+    for i in $(seq -w 1 ${NUM_REPLICATES}); do
+        cat << nexus > ${SPECIES_TREES_DIR}/lf${num_leaves}_replicate$i.nex
+#NEXUS
+begin trees;
+  tree tree1 = $user_tree
+end;
+nexus
+    done
+
+    echo "  Done! Created ${NUM_REPLICATES} replicates using user tree."
+    echo ""
 else
+    # Simulate species trees with SimPhy
 
 for num_leaves in "${NUM_LEAVES[@]}"; do
      echo "  Simulating ${NUM_REPLICATES} species trees with ${num_leaves} leaves..."
@@ -510,13 +624,10 @@ nexus
 
 done
 
-
-
+fi  # End user tree / SimPhy conditional
 
 echo "Phase 1 completed!"
 echo ""
-
-fi  # End of INFER_ONLY check for Phase 1
 
 # ============================================================================
 # PHASE 2: SIMULATE GENE TREES
@@ -715,6 +826,23 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                             if [ -f "${dna_folder}/alignment.phy" ]; then
                                 mv "${dna_folder}/alignment.phy" "${dna_folder}/alignment_TRUE.phy"
 
+                                # Generate unaligned sequences if INFER_ALIGNMENT is enabled
+                                if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                                    # Also generate unaligned FASTA output
+                                    iqtree2 --alisim "${dna_folder}/unaligned" \
+                                            -m "${model}" \
+                                            -t "${dna_folder}/gene_tree.nwk" \
+                                            --length ${ALIGNMENT_LENGTH_DNA} \
+                                            -seed ${current_seed} \
+                                            --out-format fasta \
+                                            -quiet 2>/dev/null || true
+
+                                    # Rename unaligned output
+                                    if [ -f "${dna_folder}/unaligned.fa" ]; then
+                                        mv "${dna_folder}/unaligned.fa" "${dna_folder}/sequences_unaligned.fasta"
+                                    fi
+                                fi
+
                                 # Check for duplicates if retry is enabled
                                 if [ $MAX_RETRIES -gt 0 ] && check_duplicates "${dna_folder}/alignment_TRUE.phy"; then
                                     retry_count=$((retry_count + 1))
@@ -740,22 +868,54 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     fi
                 fi
 
-                # Estimate gene tree with PhyML
-                if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
-                    phyml -i "${dna_folder}/alignment_TRUE.phy" \
-                          -m GTR \
-                          -c 4 \
-                          -a e \
-                          -b 0 \
-                          -o tlr \
-                          --quiet 2>/dev/null
+                # Infer alignment with MAFFT if requested
+                if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${dna_folder}/sequences_unaligned.fasta" ]; then
+                    if command -v mafft &> /dev/null; then
+                        # Run MAFFT to create inferred alignment
+                        mafft --auto --quiet "${dna_folder}/sequences_unaligned.fasta" > "${dna_folder}/alignment_INFERRED.fasta" 2>/dev/null
 
-                    # Root the tree using midpoint rooting
-                    if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
-                        # This would use URec or a similar tool for midpoint-plateau rooting
-                        # For now, we'll just copy the ML tree
-                        cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
-                           "${dna_folder}/ml_gene_tree.nwk"
+                        # Convert FASTA to PHYLIP format for PhyML
+                        if [ -f "${dna_folder}/alignment_INFERRED.fasta" ]; then
+                            # Use iqtree2 to convert format (it's already available)
+                            iqtree2 -s "${dna_folder}/alignment_INFERRED.fasta" --print-phylip -quiet 2>/dev/null || true
+
+                            # iqtree2 creates .phy file
+                            if [ -f "${dna_folder}/alignment_INFERRED.fasta.phy" ]; then
+                                mv "${dna_folder}/alignment_INFERRED.fasta.phy" "${dna_folder}/alignment_INFERRED.phy"
+                            fi
+                        fi
+                    fi
+                fi
+
+                # Estimate gene tree with PhyML
+                if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+                    # Determine which alignment to use
+                    if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${dna_folder}/alignment_INFERRED.phy" ]; then
+                        alignment_file="${dna_folder}/alignment_INFERRED.phy"
+                        ml_tree_suffix="inferred"
+                    elif [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
+                        alignment_file="${dna_folder}/alignment_TRUE.phy"
+                        ml_tree_suffix="true"
+                    else
+                        alignment_file=""
+                    fi
+
+                    if [ -n "${alignment_file}" ]; then
+                        phyml -i "${alignment_file}" \
+                              -m GTR \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
+
+                        # Root the tree using midpoint rooting
+                        if [ -f "${alignment_file}_phyml_tree.txt" ]; then
+                            # This would use URec or a similar tool for midpoint-plateau rooting
+                            # For now, we'll just copy the ML tree
+                            cp "${alignment_file}_phyml_tree.txt" \
+                               "${dna_folder}/ml_gene_tree.nwk"
+                        fi
                     fi
                 fi
             done
@@ -832,6 +992,23 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                             if [ -f "${protein_folder}/alignment.phy" ]; then
                                 mv "${protein_folder}/alignment.phy" "${protein_folder}/alignment_TRUE.phy"
 
+                                # Generate unaligned sequences if INFER_ALIGNMENT is enabled
+                                if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                                    # Also generate unaligned FASTA output
+                                    iqtree2 --alisim "${protein_folder}/unaligned" \
+                                            -m "${model}" \
+                                            -t "${protein_folder}/gene_tree.nwk" \
+                                            --length ${ALIGNMENT_LENGTH_PROTEIN} \
+                                            -seed ${current_seed} \
+                                            --out-format fasta \
+                                            -quiet 2>/dev/null || true
+
+                                    # Rename unaligned output
+                                    if [ -f "${protein_folder}/unaligned.fa" ]; then
+                                        mv "${protein_folder}/unaligned.fa" "${protein_folder}/sequences_unaligned.fasta"
+                                    fi
+                                fi
+
                                 # Check for duplicates if retry is enabled
                                 if [ $MAX_RETRIES -gt 0 ] && check_duplicates "${protein_folder}/alignment_TRUE.phy"; then
                                     retry_count=$((retry_count + 1))
@@ -857,21 +1034,53 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     fi
                 fi
 
-                # Estimate gene tree with PhyML (protein mode)
-                if [ ${RUN_ML_ESTIMATION} -eq 1 ] && [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
-                    phyml -i "${protein_folder}/alignment_TRUE.phy" \
-                          -d aa \
-                          -m WAG \
-                          -c 4 \
-                          -a e \
-                          -b 0 \
-                          -o tlr \
-                          --quiet 2>/dev/null
+                # Infer alignment with MAFFT if requested
+                if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${protein_folder}/sequences_unaligned.fasta" ]; then
+                    if command -v mafft &> /dev/null; then
+                        # Run MAFFT to create inferred alignment
+                        mafft --auto --quiet "${protein_folder}/sequences_unaligned.fasta" > "${protein_folder}/alignment_INFERRED.fasta" 2>/dev/null
 
-                    # Root the tree using midpoint rooting
-                    if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
-                        cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
-                           "${protein_folder}/ml_gene_tree.nwk"
+                        # Convert FASTA to PHYLIP format for PhyML
+                        if [ -f "${protein_folder}/alignment_INFERRED.fasta" ]; then
+                            # Use iqtree2 to convert format (it's already available)
+                            iqtree2 -s "${protein_folder}/alignment_INFERRED.fasta" --print-phylip -quiet 2>/dev/null || true
+
+                            # iqtree2 creates .phy file
+                            if [ -f "${protein_folder}/alignment_INFERRED.fasta.phy" ]; then
+                                mv "${protein_folder}/alignment_INFERRED.fasta.phy" "${protein_folder}/alignment_INFERRED.phy"
+                            fi
+                        fi
+                    fi
+                fi
+
+                # Estimate gene tree with PhyML (protein mode)
+                if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+                    # Determine which alignment to use
+                    if [ ${INFER_ALIGNMENT} -eq 1 ] && [ -f "${protein_folder}/alignment_INFERRED.phy" ]; then
+                        alignment_file="${protein_folder}/alignment_INFERRED.phy"
+                        ml_tree_suffix="inferred"
+                    elif [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
+                        alignment_file="${protein_folder}/alignment_TRUE.phy"
+                        ml_tree_suffix="true"
+                    else
+                        alignment_file=""
+                    fi
+
+                    if [ -n "${alignment_file}" ]; then
+                        phyml -i "${alignment_file}" \
+                              -d aa \
+                              -m WAG \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
+
+                        # Root the tree using midpoint rooting
+                        if [ -f "${alignment_file}_phyml_tree.txt" ]; then
+                            cp "${alignment_file}_phyml_tree.txt" \
+                               "${protein_folder}/ml_gene_tree.nwk"
+                        fi
                     fi
                 fi
             done

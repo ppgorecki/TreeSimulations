@@ -13,6 +13,38 @@ Species trees are simulated using **SimPhy** version 1.0.2+ with a birth-death p
 
 SimPhy produces **ultrametric species trees**, where all leaves are equidistant from the root.
 
+### Alternative: User-Provided Species Trees
+
+The pipeline supports using your own species tree instead of generating random trees with the `-u FILE` option:
+
+```bash
+# Use your own species tree
+./simulate_pipeline.sh -u my_species_tree.nwk -n 100
+
+# Supports both Newick and Nexus formats
+./simulate_pipeline.sh -u my_tree.nex -n 50 -t protein
+```
+
+**When using `-u FILE`:**
+- **Phase 1 is skipped** - No SimPhy species tree generation
+- The pipeline automatically detects the number of leaves in your tree
+- The same tree is used for all replicates
+- Proceeds directly to **Phase 2** (gene tree simulation)
+
+**Requirements:**
+- Tree must be in **Newick** (`.nwk`, `.tree`) or **Nexus** (`.nex`) format
+- Tree must be **ultrametric** (all leaves equidistant from root)
+- Use `tree_height.py --ultrametric` to fix non-ultrametric trees
+
+**Example workflow:**
+```bash
+# Step 1: Prepare ultrametric tree
+./tree_height.py unfoldedtree.newick --scale 180 --ultrametric -o species.newick
+
+# Step 2: Use in simulation
+./simulate_pipeline.sh -u species.newick -n 100
+```
+
 ### SimPhy Command for Species Trees
 
 ```bash
@@ -160,13 +192,60 @@ iqtree2 --alisim alignment \
   -af phy
 ```
 
+### MAFFT Alignment Inference (Optional)
+
+The pipeline can optionally infer alignments using **MAFFT** instead of using the true alignment from AliSim. This allows testing the impact of alignment error on phylogenetic tree estimation.
+
+**Enable with the `-a` flag:**
+```bash
+# Infer alignments with MAFFT
+./simulate_pipeline.sh -n 100 -l 12 -a
+
+# Combine with indels and user tree
+./simulate_pipeline.sh -u my_tree.nwk -n 50 -a --indel-model realistic
+```
+
+**Workflow without `-a` (default):**
+```
+AliSim → alignment_TRUE.phy → PhyML → ml_gene_tree.nwk
+```
+
+**Workflow with `-a` (MAFFT inference):**
+```
+AliSim → sequences_unaligned.fasta → MAFFT → alignment_INFERRED.phy → PhyML → ml_gene_tree.nwk
+       ↘ alignment_TRUE.phy (saved for reference)
+```
+
+**MAFFT command:**
+```bash
+# Infer alignment with automatic algorithm selection
+mafft --auto --quiet sequences_unaligned.fasta > alignment_INFERRED.fasta
+
+# Convert FASTA to PHYLIP for PhyML
+iqtree2 -s alignment_INFERRED.fasta --print-phylip
+```
+
+**Files generated with `-a`:**
+- `sequences_unaligned.fasta` - Unaligned sequences from AliSim
+- `alignment_TRUE.phy` - True alignment (reference)
+- `alignment_INFERRED.fasta` - MAFFT-inferred alignment (FASTA)
+- `alignment_INFERRED.phy` - MAFFT-inferred alignment (PHYLIP)
+- `ml_gene_tree.nwk` - ML tree from **inferred** alignment
+
+**Use cases:**
+1. Study alignment error impact on tree inference
+2. Compare true vs. inferred alignment accuracy
+3. Test phylogenetic methods under realistic conditions
+4. Benchmark alignment software performance
+
 ### Maximum Likelihood Gene Tree Estimation
 
-Gene trees are estimated from true alignments using **PhyML** v3.1+ with:
+Gene trees are estimated from alignments using **PhyML** v3.1+ with:
 
 **Model**: GTR+Γ
 ```bash
-phyml -i alignment_TRUE.phy \
+# Uses alignment_INFERRED.phy if -a flag enabled, otherwise alignment_TRUE.phy
+phyml -i alignment.phy \
   -m GTR \
   -c 4 \
   -a e \
@@ -182,7 +261,7 @@ phyml -i alignment_TRUE.phy \
 - `-b 0`: No bootstrap
 - `-o tlr`: Optimize topology, branch lengths, and substitution rates
 
-**Output**: Unrooted ML tree in `alignment_TRUE.phy_phyml_tree.txt`
+**Output**: Unrooted ML tree in `alignment.phy_phyml_tree.txt`
 
 **Note**: ML tree estimation can be skipped using the `-m` flag (alignments only), or run separately using the `-i` flag (infer-only mode). See "Two-Stage Workflow" section below for details.
 
@@ -227,12 +306,30 @@ iqtree2 --alisim alignment \
   --out-format phylip
 ```
 
+### MAFFT Alignment Inference (Optional)
+
+Like Phase 3, protein alignments can be inferred using **MAFFT** with the `-a` flag:
+
+**Workflow with `-a` (MAFFT inference):**
+```
+AliSim → sequences_unaligned.fasta → MAFFT → alignment_INFERRED.phy → PhyML → ml_gene_tree.nwk
+       ↘ alignment_TRUE.phy (saved for reference)
+```
+
+**Files generated:**
+- `sequences_unaligned.fasta` - Unaligned protein sequences
+- `alignment_TRUE.phy` - True alignment (reference)
+- `alignment_INFERRED.fasta` - MAFFT-inferred alignment
+- `alignment_INFERRED.phy` - MAFFT-inferred alignment (PHYLIP format)
+- `ml_gene_tree.nwk` - ML tree from **inferred** alignment
+
 ### Maximum Likelihood Estimation
 
 Protein trees estimated using **PhyML** with:
 
 ```bash
-phyml -i alignment_TRUE.phy \
+# Uses alignment_INFERRED.phy if -a flag enabled, otherwise alignment_TRUE.phy
+phyml -i alignment.phy \
   -d aa \
   -m WAG \
   -c 4 \
@@ -558,8 +655,11 @@ simulation_output/
 │           ├── gene_tree.nwk             # Gene tree from Phase 2 (branches in subs/site)
 │           ├── alignment_TRUE.phy        # True alignment (from AliSim)
 │           ├── alignment.unaligned.fa    # Unaligned sequences (auto-generated by AliSim)
-│           ├── alignment_TRUE.phy_phyml_tree.txt  # ML tree
-│           ├── alignment_TRUE.phy_phyml_stats.txt # PhyML statistics
+│           ├── sequences_unaligned.fasta # Unaligned sequences (with -a flag)
+│           ├── alignment_INFERRED.fasta  # MAFFT-inferred alignment (with -a flag)
+│           ├── alignment_INFERRED.phy    # MAFFT-inferred alignment PHYLIP (with -a flag)
+│           ├── alignment_*.phy_phyml_tree.txt  # ML tree
+│           ├── alignment_*.phy_phyml_stats.txt # PhyML statistics
 │           └── ml_gene_tree.nwk          # Copied ML tree
 └── protein/
     └── leaves12_dl1e-10_ps1e7/
@@ -567,10 +667,20 @@ simulation_output/
             ├── gene_tree.nwk             # Gene tree from Phase 2 (branches in subs/site)
             ├── alignment_TRUE.phy        # True alignment (from AliSim)
             ├── alignment.unaligned.fa    # Unaligned sequences (auto-generated by AliSim)
-            ├── alignment_TRUE.phy_phyml_tree.txt  # ML tree
-            ├── alignment_TRUE.phy_phyml_stats.txt # PhyML statistics
+            ├── sequences_unaligned.fasta # Unaligned sequences (with -a flag)
+            ├── alignment_INFERRED.fasta  # MAFFT-inferred alignment (with -a flag)
+            ├── alignment_INFERRED.phy    # MAFFT-inferred alignment PHYLIP (with -a flag)
+            ├── alignment_*.phy_phyml_tree.txt  # ML tree
+            ├── alignment_*.phy_phyml_stats.txt # PhyML statistics
             └── ml_gene_tree.nwk          # Copied ML tree
 ```
+
+**Note**: When using the `-a` flag (MAFFT alignment inference):
+- `sequences_unaligned.fasta` - Generated by AliSim in FASTA format
+- `alignment_INFERRED.*` files contain the MAFFT-inferred alignment
+- `alignment_TRUE.phy` is still generated for comparison purposes
+- PhyML uses `alignment_INFERRED.phy` instead of `alignment_TRUE.phy`
+- `ml_gene_tree.nwk` is estimated from the **inferred** alignment
 
 ### Simulation Summary File
 
@@ -645,6 +755,7 @@ See `BUGFIX_DL_AND_SEED.md` for documentation of earlier fixes.
 - **Ly-Trong, N. et al. (2022).** AliSim: A Fast and Versatile Phylogenetic Sequence Simulator for the Genomic Era. Molecular Biology and Evolution, 39(5):msac092.
 - **Minh, B.Q. et al. (2020).** IQ-TREE 2: New models and efficient methods for phylogenetic inference in the genomic era. Molecular Biology and Evolution, 37(5):1530-1534.
 - **Guindon, S. et al. (2010).** New algorithms and methods to estimate maximum-likelihood phylogenies: assessing the performance of PhyML 3.0. Systematic Biology, 59(3):307-321.
+- **Katoh, K. and Standley, D.M. (2013).** MAFFT Multiple Sequence Alignment Software Version 7: Improvements in Performance and Usability. Molecular Biology and Evolution, 30(4):772-780.
 
 ### Indel Modeling
 
@@ -673,6 +784,15 @@ The pipeline can be run with customizable parameters:
 # Custom configuration
 ./simulate_pipeline.sh -n 50 -l 12,20,50 -t both -o my_output -s 42
 
+# Use your own species tree (skips Phase 1)
+./simulate_pipeline.sh -u my_species_tree.nwk -n 100
+
+# Infer alignments with MAFFT
+./simulate_pipeline.sh -n 100 -l 12 -a
+
+# Combine user tree, MAFFT alignment, and indels
+./simulate_pipeline.sh -u my_tree.nwk -n 50 -a --indel-model realistic
+
 # Two-stage workflow: alignments first, ML trees later
 # Stage 1: Generate alignments only (skip PhyML, ~3x faster)
 ./simulate_pipeline.sh -n 100 -l 12 -o my_output -m
@@ -686,6 +806,8 @@ The pipeline can be run with customizable parameters:
 #   -t TYPE              Sequence type: dna, protein, or both (default: both)
 #   -o DIR               Output directory (default: simulation_output)
 #   -s SEED              Random seed (default: 22)
+#   -u FILE              User-provided species tree (Newick/Nexus, skips Phase 1)
+#   -a                   Infer alignments with MAFFT instead of using true alignments
 #   -r MAX               Retry if duplicate sequences found, up to MAX attempts (default: 0)
 #   -f NUM               Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
 #   -m                   Skip ML tree estimation (generate alignments only)
@@ -789,4 +911,14 @@ The pipeline allows customization of alignment lengths for both DNA and protein 
 - **Variable lengths**: Test method robustness across different data sizes
 - **Protein-specific lengths**: Simulate realistic protein domain lengths (e.g., 200-500 aa)
 
-See `README.md` for complete usage documentation.
+### Recent Updates
+
+See `RECENT_UPDATES.md` for documentation of recent features:
+- **User-provided species trees** (`-u FILE`) - Use your own tree, skip Phase 1
+- **MAFFT alignment inference** (`-a`) - Infer alignments instead of using true alignments
+- **tree_height.py** - Utility for tree analysis, rescaling, and ultrametric enforcement
+- **Updated compareml.sh** - Handles new 6-column TSV format with `num_leaves`
+
+### Additional Documentation
+
+See `README.md` and `QUICK_START.md` for complete usage documentation.

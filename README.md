@@ -33,6 +33,11 @@ The pipeline consists of four phases:
   - Download from: http://www.atgc-montpellier.fr/phyml/
   - Ubuntu/Debian: `sudo apt-get install phyml`
 
+- **MAFFT** (optional, for alignment inference with `-a` flag)
+  - Download from: https://mafft.cbrc.jp/alignment/software/
+  - Ubuntu/Debian: `sudo apt-get install mafft`
+  - Used to infer alignments from unaligned sequences
+
 - **URec** (optional, for midpoint-plateau rooting)
   - Download from: http://www.lcqb.upmc.fr/URec/
 
@@ -101,6 +106,15 @@ The pipeline consists of four phases:
 ./simulate_pipeline.sh -n 100 -l 12 --indel-model realistic
 ./simulate_pipeline.sh -n 100 -l 12 --protein-length 500 --indel-model realistic
 
+# Use user-provided species tree (skips Phase 1)
+./simulate_pipeline.sh -u my_species_tree.nwk -n 100
+
+# Infer alignments with MAFFT (instead of using true alignments)
+./simulate_pipeline.sh -n 100 -l 12 -a
+
+# Combine user tree, MAFFT alignment inference, and indels
+./simulate_pipeline.sh -u my_tree.nwk -n 50 -a --indel-model realistic
+
 # Show help
 ./simulate_pipeline.sh -h
 ```
@@ -108,6 +122,7 @@ The pipeline consists of four phases:
 **Available Options:**
 - `-n NUM` - Number of replicates per configuration (default: 100)
 - `-l LEAVES` - Comma-separated list of leaf counts (default: 12,20)
+- `-u FILE` - User-provided species tree file (Newick or Nexus format, skips Phase 1)
 - `-t TYPE` - Sequence type: dna, protein, or both (default: both)
 - `-o DIR` - Output directory (default: simulation_output)
 - `-s SEED` - Random seed (default: 22)
@@ -115,6 +130,7 @@ The pipeline consists of four phases:
 - `-f NUM` - Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
 - `-m` - Skip ML tree estimation (generate alignments only, ~3x faster)
 - `-i` - Infer-only mode: run only PhyML on existing alignments
+- `-a` - Infer alignments with MAFFT instead of using true alignments
 - `--dna-length NUM` - DNA alignment length in base pairs (default: 1000)
 - `--protein-length NUM` - Protein alignment length in amino acids (default: 333)
 - `--indel-model MODEL` - Indel preset: noindels, realistic, conservative, or highrate
@@ -251,6 +267,46 @@ cp config.example.sh config.sh
 # Edit config.sh with your parameters
 # Then source it in your script or use as reference
 ```
+
+## Additional Tools
+
+### Tree Height Calculator and Rescaling (`tree_height.py`)
+
+The `tree_height.py` tool calculates tree heights, rescales branch lengths, and enforces ultrametric properties. This is particularly useful for preparing custom species trees for SimPhy.
+
+**Calculate tree height:**
+```bash
+./tree_height.py tree.newick
+```
+
+**Rescale branch lengths:**
+```bash
+# Convert years to substitutions per site
+./tree_height.py tree.newick --scale 0.0000000004 --output scaled.newick
+```
+
+**Make tree ultrametric (required for SimPhy):**
+```bash
+# SimPhy requires ultrametric trees
+./tree_height.py tree.newick --scale 180 --ultrametric --output ultrametric.newick
+```
+
+**Complete workflow for preparing custom trees:**
+```bash
+# Step 1: Rescale and make ultrametric
+./tree_height.py unfoldedtree.newick --scale 180 --ultrametric -o my_tree.newick
+
+# Step 2: Use with simulation pipeline
+./simulate_pipeline.sh -u my_tree.newick -n 100 --indel-model realistic
+```
+
+**Options:**
+- `--scale FACTOR` - Multiply all branch lengths by this factor
+- `--ultrametric` - Adjust terminal branches to make all leaves equidistant from root
+- `--output FILE` - Save rescaled tree to file
+- `--quiet` - Suppress output display
+
+See `RECENT_UPDATES.md` for detailed documentation.
 
 ## Output Structure
 

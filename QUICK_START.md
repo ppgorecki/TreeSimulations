@@ -25,10 +25,15 @@ sudo cp iqtree-2.3.6-Linux-intel/bin/iqtree2 /usr/local/bin/
 # Ubuntu/Debian:
 sudo apt-get install phyml
 
+# Install MAFFT (optional, for alignment inference with -a flag)
+# Ubuntu/Debian:
+sudo apt-get install mafft
+
 # Verify installations
 simphy_lnx64 -h 2>&1 | head -10
 iqtree2 --version
 phyml --version
+mafft --version
 ```
 
 ## Running the Pipeline
@@ -50,6 +55,15 @@ phyml --version
 
 # Custom configuration
 ./simulate_pipeline.sh -n 50 -l 12,20,50 -t both -o my_output -s 42
+
+# Use your own species tree (skips Phase 1)
+./simulate_pipeline.sh -u my_species_tree.nwk -n 100
+
+# Infer alignments with MAFFT (instead of using true alignments)
+./simulate_pipeline.sh -n 100 -l 12 -a
+
+# Combine user tree, MAFFT alignment, and indels
+./simulate_pipeline.sh -u my_tree.nwk -n 50 -a --indel-model realistic
 
 # Show all options
 ./simulate_pipeline.sh -h
@@ -88,6 +102,8 @@ Both scripts support the same options:
 | Type | `-t TYPE` | `-t, --type TYPE` | dna, protein, or both | both |
 | Output | `-o DIR` | `-o, --output DIR` | Output directory | simulation_output |
 | Seed | `-s SEED` | `-s, --seed SEED` | Random seed | 22 |
+| User Tree | `-u FILE` | N/A | User-provided species tree (Newick/Nexus, skips Phase 1) | - |
+| MAFFT Align | `-a` | N/A | Infer alignments with MAFFT instead of using true alignments | - |
 | Filter | `-f NUM` | N/A | Require gene trees with exactly NUM leaves | 0 (no filter) |
 | Skip ML | `-m` | N/A | Skip PhyML (alignments only) | - |
 | Infer-only | `-i` | N/A | Run only PhyML on existing alignments | - |
@@ -238,6 +254,39 @@ ALIGNMENT_LENGTH_DNA=500
 ALIGNMENT_LENGTH_PROTEIN=166
 ```
 
+## Additional Tools
+
+### tree_height.py - Tree Analysis and Rescaling
+
+A utility tool for calculating tree height and preparing trees for simulation:
+
+```bash
+# Calculate tree height
+./tree_height.py my_tree.newick
+
+# Rescale branch lengths (e.g., years to larger time units)
+./tree_height.py my_tree.newick --scale 180
+
+# Make tree ultrametric (required for SimPhy)
+./tree_height.py my_tree.newick --scale 180 --ultrametric -o rescaled.newick
+
+# Use rescaled tree in pipeline
+./simulate_pipeline.sh -u rescaled.newick -n 100
+```
+
+**Common use case:**
+```bash
+# Step 1: Prepare ultrametric tree from your data
+./tree_height.py unfoldedtree.newick --scale 180 --ultrametric -o species.newick
+
+# Step 2: Run simulation with your tree
+./simulate_pipeline.sh -u species.newick -n 100 -t protein --indel-model realistic
+```
+
+**Why ultrametric?** SimPhy requires all leaves to be exactly equidistant from the root. The `--ultrametric` flag fixes floating-point rounding errors that can cause rejection.
+
+See `tree_height.py --help` for all options.
+
 ## Troubleshooting
 
 ### Check if software is installed
@@ -279,4 +328,7 @@ After running the pipeline:
 
 ## Getting Help
 
-See `README.md` for detailed documentation and parameter explanations.
+- `README.md` - Complete documentation and parameter explanations
+- `RECENT_UPDATES.md` - Latest features (user trees, MAFFT alignment inference, tree_height.py)
+- `PIPELINE.md` - Detailed description of all simulation phases
+- `./simulate_pipeline.sh -h` - Command-line help
