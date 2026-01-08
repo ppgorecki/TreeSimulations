@@ -1044,6 +1044,8 @@ if sequences:
                                 cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
                                    "${dna_folder}/ml_gene_tree.nwk"
                             fi
+                        else
+                            echo Missing phyml tree "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt"
                         fi
                     fi
 
@@ -1067,6 +1069,8 @@ if sequences:
                                 cp "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${dna_folder}/ml_gene_tree.nwk"
                             fi
+                        else                          
+                            echo Missing phyml tree "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt"                        
                         fi
                     fi
                 fi
@@ -1250,6 +1254,8 @@ if sequences:
                                 cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
                                    "${protein_folder}/ml_gene_tree.nwk"
                             fi
+                        else
+                            echo Missing phyml tree "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt"
                         fi
                     fi
 
@@ -1274,6 +1280,8 @@ if sequences:
                                 cp "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${protein_folder}/ml_gene_tree.nwk"
                             fi
+                        else                            
+                            echo Missing phyml tree "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt"                        
                         fi
                     fi
                 fi
@@ -1531,6 +1539,137 @@ For detailed methodology, see PIPELINE.md
 ================================================================================
 EOF
 
+# ============================================================================
+# FILE VERIFICATION LOG
+# ============================================================================
+
+echo "Generating file verification log..."
+
+VERIFICATION_FILE="${OUTPUT_DIR}/file_verification.tsv"
+
+# Write header
+cat > "${VERIFICATION_FILE}" << EOF
+Configuration	Replicate	FileType	ExpectedPath	Exists	FileSize
+EOF
+
+# Function to check file and write to verification log
+check_file() {
+    local config="$1"
+    local replicate="$2"
+    local file_type="$3"
+    local file_path="$4"
+
+    if [ -f "${file_path}" ]; then
+        local file_size=$(stat -f%z "${file_path}" 2>/dev/null || stat -c%s "${file_path}" 2>/dev/null || echo "unknown")
+        echo -e "${config}\t${replicate}\t${file_type}\t${file_path}\tYES\t${file_size}" >> "${VERIFICATION_FILE}"
+    else
+        echo -e "${config}\t${replicate}\t${file_type}\t${file_path}\tNO\t0" >> "${VERIFICATION_FILE}"
+    fi
+}
+
+if [ ${INFER_ONLY} -eq 0 ]; then
+    # Check species trees
+    for num_leaves in "${NUM_LEAVES[@]}"; do
+        for i in $(seq -w 1 ${NUM_REPLICATES}); do
+            species_tree_file="${SPECIES_TREES_DIR}/lf${num_leaves}_replicate$i.nex"
+            check_file "species_trees_lf${num_leaves}" "$i" "species_tree" "${species_tree_file}"
+        done
+    done
+
+    # Check gene trees, alignments, and ML trees
+    for num_leaves in "${NUM_LEAVES[@]}"; do
+        for dl_rate in "${DUPLICATION_LOSS_RATES[@]}"; do
+            for pop_size in "${POPULATION_SIZES[@]}"; do
+                config_name="leaves${num_leaves}_dl${dl_rate}_ps${pop_size}"
+
+                for i in $(seq -w 1 ${NUM_REPLICATES}); do
+                    # Gene tree
+                    gene_tree_file="${GENE_TREES_DIR}/${config_name}/replicate_$i/1/g_trees1.trees"
+                    check_file "${config_name}" "$i" "gene_tree" "${gene_tree_file}"
+
+                    # DNA files
+                    if [ ${RUN_DNA} -eq 1 ]; then
+                        dna_folder="${DNA_DIR}/${config_name}/replicate_$i"
+
+                        # True alignment
+                        check_file "${config_name}" "$i" "dna_alignment_true" "${dna_folder}/alignment_TRUE.phy"
+
+                        # Inferred alignment (if MAFFT was used)
+                        if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                            check_file "${config_name}" "$i" "dna_sequences_unaligned" "${dna_folder}/sequences_unaligned.fasta"
+                            check_file "${config_name}" "$i" "dna_alignment_inferred" "${dna_folder}/alignment_INFERRED.phy"
+                        fi
+
+                        # ML trees (if enabled)
+                        if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+                            if [ ${ESTIMATE_TRUE_TREE} -eq 1 ] && [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Both trees
+                                check_file "${config_name}" "$i" "dna_ml_tree_true" "${dna_folder}/ml_gene_tree_TRUE.nwk"
+                                check_file "${config_name}" "$i" "dna_ml_tree_inferred" "${dna_folder}/ml_gene_tree_INFERRED.nwk"
+                            elif [ ${ESTIMATE_TRUE_TREE} -eq 1 ]; then
+                                # Only true tree
+                                check_file "${config_name}" "$i" "dna_ml_tree" "${dna_folder}/ml_gene_tree.nwk"
+                            elif [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Only inferred tree
+                                check_file "${config_name}" "$i" "dna_ml_tree" "${dna_folder}/ml_gene_tree.nwk"
+                            fi
+                        fi
+                    fi
+
+                    # Protein files
+                    if [ ${RUN_PROTEIN} -eq 1 ]; then
+                        protein_folder="${PROTEIN_DIR}/${config_name}/replicate_$i"
+
+                        # True alignment
+                        check_file "${config_name}" "$i" "protein_alignment_true" "${protein_folder}/alignment_TRUE.phy"
+
+                        # Inferred alignment (if MAFFT was used)
+                        if [ ${INFER_ALIGNMENT} -eq 1 ]; then
+                            check_file "${config_name}" "$i" "protein_sequences_unaligned" "${protein_folder}/sequences_unaligned.fasta"
+                            check_file "${config_name}" "$i" "protein_alignment_inferred" "${protein_folder}/alignment_INFERRED.phy"
+                        fi
+
+                        # ML trees (if enabled)
+                        if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
+                            if [ ${ESTIMATE_TRUE_TREE} -eq 1 ] && [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Both trees
+                                check_file "${config_name}" "$i" "protein_ml_tree_true" "${protein_folder}/ml_gene_tree_TRUE.nwk"
+                                check_file "${config_name}" "$i" "protein_ml_tree_inferred" "${protein_folder}/ml_gene_tree_INFERRED.nwk"
+                            elif [ ${ESTIMATE_TRUE_TREE} -eq 1 ]; then
+                                # Only true tree
+                                check_file "${config_name}" "$i" "protein_ml_tree" "${protein_folder}/ml_gene_tree.nwk"
+                            elif [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Only inferred tree
+                                check_file "${config_name}" "$i" "protein_ml_tree" "${protein_folder}/ml_gene_tree.nwk"
+                            fi
+                        fi
+                    fi
+                done
+            done
+        done
+    done
+fi
+
+# Generate summary statistics
+total_files=$(tail -n +2 "${VERIFICATION_FILE}" 2>/dev/null | wc -l | awk '{print $1}')
+missing_files=$(tail -n +2 "${VERIFICATION_FILE}" 2>/dev/null | awk '$5 == "NO" {count++} END {print count+0}')
+total_files=${total_files:-0}
+missing_files=${missing_files:-0}
+existing_files=$((total_files - missing_files))
+
+echo ""
+echo "File verification completed:"
+echo "  Total expected files: ${total_files}"
+echo "  Files created: ${existing_files}"
+echo "  Files missing: ${missing_files}"
+echo "  Verification log: ${VERIFICATION_FILE}"
+
+if [ ${missing_files} -gt 0 ]; then
+    echo ""
+    echo "Warning: Some files are missing. Check ${VERIFICATION_FILE} for details."
+fi
+
+echo ""
 echo "=========================================="
 echo "Pipeline Completed Successfully!"
 echo "=========================================="
