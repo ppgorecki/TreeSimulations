@@ -35,8 +35,11 @@ OPTIONS:
     -f NUM        Filter gene trees: require exactly NUM leaves (default: 0 = no filtering)
     -m            Skip ML tree estimation (PhyML) - only generate alignments
     -i            Infer-only mode: only run PhyML on existing alignments (skip simulation)
-    -a            Infer alignments with MAFFT instead of using true alignments
-                  Generates unaligned sequences and runs MAFFT before PhyML
+    -a MODE       ML tree inference mode (default: inferred)
+                  true,inferred: Infer trees from both true and inferred (MAFFT) alignments
+                  true:          Infer trees only from true alignments (no MAFFT)
+                  inferred:      Infer trees only from inferred (MAFFT) alignments
+                  none:          Skip all ML tree inference (same as -m)
     --dna-length NUM      DNA alignment length in base pairs (default: 1000)
     --protein-length NUM  Protein alignment length in amino acids (default: 333)
     --indel-model Indel preset: noindels, realistic, conservative, or highrate
@@ -47,6 +50,15 @@ OPTIONS:
     --indel       Enable indel simulation with rates INS,DEL (e.g., --indel 0.03,0.09)
     --indel-size  Indel length distribution: POW a max, GEO p, NB r p, or LAV a max
                   Example: --indel-size "POW 1.7 50" (default: POW 1.7 50)
+    --dl-model    Duplication/loss model preset: low, medium, high, or comma-separated list
+                  low:    1e-10 events/year (minimal gene family evolution)
+                  medium: 2e-10 events/year (moderate duplication/loss)
+                  high:   5e-10 events/year (high duplication/loss rate)
+                  Example: --dl-model low,medium,high (default: low,medium,high)
+    --ils-model   ILS/population size model: low, medium, or comma-separated list
+                  low:    1e7 (high ILS - smaller population, more coalescent variation)
+                  medium: 5e7 (low ILS - larger population, less coalescent variation)
+                  Example: --ils-model low,medium (default: low,medium)
     -h            Show this help message
 
 EXAMPLES:
@@ -71,8 +83,17 @@ EXAMPLES:
     # Infer ML trees from existing alignments (after running with -m)
     $0 -o test_output -i
 
-    # Infer alignments with MAFFT instead of using true alignments
-    $0 -n 10 -l 12 -a
+    # Estimate ML trees only from true alignments (no MAFFT)
+    $0 -n 10 -l 12 -a true
+
+    # Estimate ML trees only from MAFFT-inferred alignments (default behavior)
+    $0 -n 10 -l 12 -a inferred
+
+    # Estimate ML trees from both true and inferred alignments
+    $0 -n 10 -l 12 -a true,inferred
+
+    # Skip ML tree estimation entirely (same as -m)
+    $0 -n 10 -l 12 -a none
 
     # No indels (substitutions only)
     $0 -n 10 -l 12 --indel-model noindels
@@ -94,6 +115,15 @@ EXAMPLES:
 
     # Longer protein alignments with indels
     $0 -n 10 -l 12 --protein-length 500 --indel-model realistic
+
+    # Use only high duplication/loss rate
+    $0 -n 10 -l 12 --dl-model high
+
+    # Use only low ILS (larger population, less coalescent variation)
+    $0 -n 10 -l 12 --ils-model medium
+
+    # Combine specific DL and ILS models
+    $0 -n 10 -l 12 --dl-model low,high --ils-model low
 
 OUTPUT:
     The pipeline generates species trees, gene trees, and sequence alignments.
@@ -137,9 +167,11 @@ OUTPUT_DIR="simulation_output"
 # Run control
 RUN_DNA=1
 RUN_PROTEIN=1
-RUN_ML_ESTIMATION=1  # 1 = run PhyML, 0 = skip ML tree estimation
-INFER_ONLY=0         # 1 = only infer ML trees from existing alignments, skip simulation
-INFER_ALIGNMENT=0    # 1 = use MAFFT to infer alignments, 0 = use true alignments from AliSim
+RUN_ML_ESTIMATION=1       # 1 = run PhyML, 0 = skip ML tree estimation
+INFER_ONLY=0              # 1 = only infer ML trees from existing alignments, skip simulation
+INFER_ALIGNMENT=1         # 1 = use MAFFT to infer alignments, 0 = don't use MAFFT
+ESTIMATE_TRUE_TREE=0      # 1 = estimate ML tree from true alignment
+ESTIMATE_INFERRED_TREE=1  # 1 = estimate ML tree from inferred (MAFFT) alignment
 
 # Duplicate handling
 MAX_RETRIES=0  # 0 = no retry, >0 = retry up to MAX_RETRIES times
@@ -218,8 +250,34 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -a)
-            INFER_ALIGNMENT=1
-            shift
+            case ${2} in
+                true,inferred)
+                    INFER_ALIGNMENT=1
+                    ESTIMATE_TRUE_TREE=1
+                    ESTIMATE_INFERRED_TREE=1
+                    ;;
+                true)
+                    INFER_ALIGNMENT=0
+                    ESTIMATE_TRUE_TREE=1
+                    ESTIMATE_INFERRED_TREE=0
+                    ;;
+                inferred)
+                    INFER_ALIGNMENT=1
+                    ESTIMATE_TRUE_TREE=0
+                    ESTIMATE_INFERRED_TREE=1
+                    ;;
+                none)
+                    RUN_ML_ESTIMATION=0
+                    INFER_ALIGNMENT=0
+                    ESTIMATE_TRUE_TREE=0
+                    ESTIMATE_INFERRED_TREE=0
+                    ;;
+                *)
+                    echo "Error: Invalid alignment mode '${2}'. Use: true,inferred, true, inferred, or none"
+                    usage
+                    ;;
+            esac
+            shift 2
             ;;
         --dna-length)
             ALIGNMENT_LENGTH_DNA=$2
@@ -263,6 +321,49 @@ while [[ $# -gt 0 ]]; do
             ;;
         --indel-size)
             INDEL_SIZE_DIST=$2
+            shift 2
+            ;;
+        --dl-model)
+            # Parse duplication/loss model preset
+            IFS=',' read -ra DL_MODEL_SPECS <<< "$2"
+            DUPLICATION_LOSS_RATES=()
+            for model in "${DL_MODEL_SPECS[@]}"; do
+                case ${model} in
+                    low)
+                        DUPLICATION_LOSS_RATES+=(1e-10)
+                        ;;
+                    medium)
+                        DUPLICATION_LOSS_RATES+=(2e-10)
+                        ;;
+                    high)
+                        DUPLICATION_LOSS_RATES+=(5e-10)
+                        ;;
+                    *)
+                        echo "Error: Invalid duplication/loss model '${model}'. Use: low, medium, or high"
+                        usage
+                        ;;
+                esac
+            done
+            shift 2
+            ;;
+        --ils-model)
+            # Parse ILS/population size model preset
+            IFS=',' read -ra ILS_MODEL_SPECS <<< "$2"
+            POPULATION_SIZES=()
+            for model in "${ILS_MODEL_SPECS[@]}"; do
+                case ${model} in
+                    low)
+                        POPULATION_SIZES+=(1e7)
+                        ;;
+                    medium)
+                        POPULATION_SIZES+=(5e7)
+                        ;;
+                    *)
+                        echo "Error: Invalid ILS model '${model}'. Use: low or medium"
+                        usage
+                        ;;
+                esac
+            done
             shift 2
             ;;
         -h)
@@ -442,13 +543,23 @@ fi
 if [ ${INFER_ONLY} -eq 0 ]; then
     if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
         echo "  ML tree estimation: YES"
+        if [ ${ESTIMATE_TRUE_TREE} -eq 1 ] && [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+            echo "    - From true alignments: YES"
+            echo "    - From inferred alignments: YES"
+        elif [ ${ESTIMATE_TRUE_TREE} -eq 1 ]; then
+            echo "    - From true alignments: YES"
+            echo "    - From inferred alignments: NO"
+        elif [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+            echo "    - From true alignments: NO"
+            echo "    - From inferred alignments: YES"
+        fi
     else
         echo "  ML tree estimation: NO (alignments only)"
     fi
     if [ ${INFER_ALIGNMENT} -eq 1 ]; then
         echo "  Alignment inference: YES (using MAFFT)"
     else
-        echo "  Alignment inference: NO (using true alignments)"
+        echo "  Alignment inference: NO (using true alignments only)"
     fi
     echo "  Alignment lengths:"
     if [ ${RUN_DNA} -eq 1 ]; then
@@ -678,8 +789,9 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                     # - `-oc 1`: Output coalescent trees
                     # - `-cs <unique_seed>`: Random seed (base_seed + replicate_number for independence)
 
-
-                    while "${SIMPHY}" \
+                    while true
+                    do 
+                        if "${SIMPHY}" \
                         -sr "${species_tree}" \
                         -rg 1 \
                         -rl F:1 \
@@ -694,9 +806,10 @@ for num_leaves in "${NUM_LEAVES[@]}"; do
                         -o "${output_folder}" \
                         -v 0 \
                         -cs ${simphy_seed}
-
-                    do
-                        break # hack, simphy returns undeterministic error sometimes
+                        then 
+                            break
+                            # hack, simphy returns undeterministic error sometimes
+                        fi                
                     done
 
                     # Check if gene tree filtering is enabled
@@ -911,52 +1024,47 @@ if sequences:
 
                 # Estimate gene tree with PhyML
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
-                    # When INFER_ALIGNMENT=1, create trees from BOTH alignments for comparison
-                    if [ ${INFER_ALIGNMENT} -eq 1 ]; then
-                        # Estimate tree from TRUE alignment
-                        if [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
-                            phyml -i "${dna_folder}/alignment_TRUE.phy" \
-                                  -m GTR \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
+                    # Estimate tree from TRUE alignment if requested
+                    if [ ${ESTIMATE_TRUE_TREE} -eq 1 ] && [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
+                        phyml -i "${dna_folder}/alignment_TRUE.phy" \
+                              -m GTR \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
 
-                            if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                        if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                            if [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Both trees requested, use specific naming
                                 cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
                                    "${dna_folder}/ml_gene_tree_TRUE.nwk"
+                            else
+                                # Only true tree requested, use generic naming
+                                cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${dna_folder}/ml_gene_tree.nwk"
                             fi
                         fi
+                    fi
 
-                        # Estimate tree from INFERRED alignment
-                        if [ -f "${dna_folder}/alignment_INFERRED.phy" ]; then
-                            phyml -i "${dna_folder}/alignment_INFERRED.phy" \
-                                  -m GTR \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
+                    # Estimate tree from INFERRED alignment if requested
+                    if [ ${ESTIMATE_INFERRED_TREE} -eq 1 ] && [ -f "${dna_folder}/alignment_INFERRED.phy" ]; then
+                        phyml -i "${dna_folder}/alignment_INFERRED.phy" \
+                              -m GTR \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
 
-                            if [ -f "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                        if [ -f "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                            if [ ${ESTIMATE_TRUE_TREE} -eq 1 ]; then
+                                # Both trees requested, use specific naming
                                 cp "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${dna_folder}/ml_gene_tree_INFERRED.nwk"
-                            fi
-                        fi
-                    else
-                        # Only create tree from TRUE alignment
-                        if [ -f "${dna_folder}/alignment_TRUE.phy" ]; then
-                            phyml -i "${dna_folder}/alignment_TRUE.phy" \
-                                  -m GTR \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
-
-                            if [ -f "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
-                                cp "${dna_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                            else
+                                # Only inferred tree requested, use generic naming
+                                cp "${dna_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${dna_folder}/ml_gene_tree.nwk"
                             fi
                         fi
@@ -1121,55 +1229,49 @@ if sequences:
 
                 # Estimate gene tree with PhyML (protein mode)
                 if [ ${RUN_ML_ESTIMATION} -eq 1 ]; then
-                    # When INFER_ALIGNMENT=1, create trees from BOTH alignments for comparison
-                    if [ ${INFER_ALIGNMENT} -eq 1 ]; then
-                        # Estimate tree from TRUE alignment
-                        if [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
-                            phyml -i "${protein_folder}/alignment_TRUE.phy" \
-                                  -d aa \
-                                  -m WAG \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
+                    # Estimate tree from TRUE alignment if requested
+                    if [ ${ESTIMATE_TRUE_TREE} -eq 1 ] && [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
+                        phyml -i "${protein_folder}/alignment_TRUE.phy" \
+                              -d aa \
+                              -m WAG \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
 
-                            if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                        if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
+                            if [ ${ESTIMATE_INFERRED_TREE} -eq 1 ]; then
+                                # Both trees requested, use specific naming
                                 cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
                                    "${protein_folder}/ml_gene_tree_TRUE.nwk"
+                            else
+                                # Only true tree requested, use generic naming
+                                cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                                   "${protein_folder}/ml_gene_tree.nwk"
                             fi
                         fi
+                    fi
 
-                        # Estimate tree from INFERRED alignment
-                        if [ -f "${protein_folder}/alignment_INFERRED.phy" ]; then
-                            phyml -i "${protein_folder}/alignment_INFERRED.phy" \
-                                  -d aa \
-                                  -m WAG \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
+                    # Estimate tree from INFERRED alignment if requested
+                    if [ ${ESTIMATE_INFERRED_TREE} -eq 1 ] && [ -f "${protein_folder}/alignment_INFERRED.phy" ]; then
+                        phyml -i "${protein_folder}/alignment_INFERRED.phy" \
+                              -d aa \
+                              -m WAG \
+                              -c 4 \
+                              -a e \
+                              -b 0 \
+                              -o tlr \
+                              --quiet 2>/dev/null
 
-                            if [ -f "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                        if [ -f "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" ]; then
+                            if [ ${ESTIMATE_TRUE_TREE} -eq 1 ]; then
+                                # Both trees requested, use specific naming
                                 cp "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${protein_folder}/ml_gene_tree_INFERRED.nwk"
-                            fi
-                        fi
-                    else
-                        # Only create tree from TRUE alignment
-                        if [ -f "${protein_folder}/alignment_TRUE.phy" ]; then
-                            phyml -i "${protein_folder}/alignment_TRUE.phy" \
-                                  -d aa \
-                                  -m WAG \
-                                  -c 4 \
-                                  -a e \
-                                  -b 0 \
-                                  -o tlr \
-                                  --quiet 2>/dev/null
-
-                            if [ -f "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" ]; then
-                                cp "${protein_folder}/alignment_TRUE.phy_phyml_tree.txt" \
+                            else
+                                # Only inferred tree requested, use generic naming
+                                cp "${protein_folder}/alignment_INFERRED.phy_phyml_tree.txt" \
                                    "${protein_folder}/ml_gene_tree.nwk"
                             fi
                         fi
