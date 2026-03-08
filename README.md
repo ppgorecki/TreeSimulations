@@ -2,6 +2,8 @@
 
 This pipeline simulates multiple sequence alignments (MSAs) and gene trees for both DNA and protein sequences, following the methodology described in Molloy and Warnow (2020).
 
+Financial support was provided by the NCN grant 2023/51/B/ST6/02792.
+
 ## Overview
 
 The pipeline consists of four phases:
